@@ -49,7 +49,6 @@ export function useApi<T>(
       cancelled = true;
       clearInterval(id);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depKey, pollMs, reloadN]);
 
   const reload = () => {
