@@ -1,6 +1,13 @@
-import { db } from "../db";
-import { buildServer } from "./server";
-import { createWebhookSink, noopSink, type ChangeSink } from "./internal/sink";
+import { config } from "dotenv";
+import type { QboConfig } from "./config";
+
+config({ path: ".env.local" });
+
+// Imports are dynamic so the env is loaded before db/index reads DATABASE_URL.
+const { db } = await import("../db");
+const { buildServer } = await import("./server");
+const { loadQboConfig } = await import("./config");
+const { createWebhookSink, noopSink } = await import("./internal/sink");
 
 const PORT = Number(process.env.PORT ?? 3001);
 
@@ -8,17 +15,23 @@ const PORT = Number(process.env.PORT ?? 3001);
 // INTERNAL_WEBHOOK_TARGET is set, mutations still record changes but don't emit.
 const target = process.env.INTERNAL_WEBHOOK_TARGET;
 const secret = process.env.INTERNAL_WEBHOOK_SECRET;
-const sink: ChangeSink =
+const sink =
   target && secret ? createWebhookSink({ url: target, secret }) : noopSink;
 
-async function start(): Promise<void> {
-  const app = buildServer({ db, sink });
-  try {
-    await app.listen({ port: PORT, host: "0.0.0.0" });
-  } catch (err) {
-    app.log.error(err);
-    process.exit(1);
-  }
+let qbo: { cfg: QboConfig } | undefined;
+try {
+  qbo = { cfg: loadQboConfig() };
+} catch (err) {
+  console.warn(
+    "QBO config not loaded; OAuth routes disabled:",
+    (err as Error).message,
+  );
 }
 
-void start();
+const app = buildServer({ db, sink, qbo });
+try {
+  await app.listen({ port: PORT, host: "0.0.0.0" });
+} catch (err) {
+  app.log.error(err);
+  process.exit(1);
+}
