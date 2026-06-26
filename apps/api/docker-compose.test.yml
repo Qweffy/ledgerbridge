@@ -1,0 +1,34 @@
+# Local Postgres + Neon HTTP proxy so the @neondatabase/serverless (neon-http)
+# driver works against a real DB for the e2e tests — mirrors the CI services.
+# Bring up:  docker compose -f docker-compose.test.yml up -d --wait
+# Then use:  DATABASE_URL=postgres://postgres:postgres@db.localtest.me:5432/main
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: main
+    ports:
+      - '5432:5432'
+    # The Drizzle migration runs on first boot (before Postgres accepts TCP), so
+    # the schema exists by the time the healthcheck — and `--wait` — pass. This
+    # avoids drizzle-kit in CI, whose neon-http driver can't reach a plain
+    # Postgres. Local dev still uses `npm run db:push` against real Neon.
+    volumes:
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  neon-proxy:
+    image: ghcr.io/timowilhelm/local-neon-http-proxy:main
+    environment:
+      PG_CONNECTION_STRING: postgres://postgres:postgres@postgres:5432/main
+    ports:
+      - '4444:4444'
+    depends_on:
+      postgres:
+        condition: service_healthy

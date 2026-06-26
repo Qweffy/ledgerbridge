@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+
+# env (never commit secrets: DATABASE_URL, QBO_CLIENT_SECRET, tokens)
+.env*
+!.env.example
+
+# build / TypeScript
+dist/
+.next/
+out/
+*.tsbuildinfo
+
+# testing
+/coverage
+
+# os
+.DS_Store
+
+# local agent config + working notes — gitignored, NOT part of the deliverable
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+LEARNING-GOALS.md
+BUILD-PLAN.md
+REQUIREMENTS.md
+WEB-PROMPTS.md

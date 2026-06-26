@@ -1,0 +1,30 @@
+{
+  "name": "ledgerbridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Two-way invoice sync between an internal invoicing system and QuickBooks Online",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w @ledgerbridge/api",
+    "dev:web": "npm run dev -w @ledgerbridge/web",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "db:generate": "npm run db:generate -w @ledgerbridge/api",
+    "db:migrate": "npm run db:migrate -w @ledgerbridge/api",
+    "db:push": "npm run db:push -w @ledgerbridge/api",
+    "db:studio": "npm run db:studio -w @ledgerbridge/api"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@typescript-eslint/eslint-plugin": "^8.18.0",
+    "@typescript-eslint/parser": "^8.18.0",
+    "eslint": "^9.17.0",
+    "typescript": "^5.7.2"
+  }
+}
