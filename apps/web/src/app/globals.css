@@ -1,26 +1,417 @@
+/* ============================================================
+   LedgerBridge — app/globals.css
+   Tailwind v4, CSS-first. The production token source of truth.
+   Transcribed from the design-system handoff (tokens authored in oklch).
+
+   Layout:
+     1. @theme        → static brand scales (neutral, primary, status
+                        ramps) + type / radius / shadow / motion.
+     2. :root / .light → semantic, theme-switching variables.
+     3. @theme inline → bind semantics to Tailwind color utilities so
+                        `bg-background`, `text-status-done-fg`, … work.
+
+   Rules: never hardcode hex/rgb in components. Reserve color for STATUS;
+   chrome stays neutral. Primary hue is one swappable token (--primary-h).
+   ============================================================ */
+
 @import "tailwindcss";
 
+/* dark is the default (:root); .light opts into the bright theme */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ------------------------------------------------------------------ */
+/* 1. Static brand scales                                              */
+/* ------------------------------------------------------------------ */
+@theme {
+  /* fonts — wired to next/font (see layout.tsx) */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  /* neutral ramp — cool slate/zinc, faint blue tint (hue 265) */
+  --color-neutral-0:    oklch(0.995 0.001 265);
+  --color-neutral-50:   oklch(0.960 0.004 265);
+  --color-neutral-100:  oklch(0.905 0.007 265);
+  --color-neutral-200:  oklch(0.825 0.009 265);
+  --color-neutral-300:  oklch(0.730 0.012 265);
+  --color-neutral-400:  oklch(0.635 0.014 265);
+  --color-neutral-500:  oklch(0.530 0.014 265);
+  --color-neutral-600:  oklch(0.420 0.013 265);
+  --color-neutral-700:  oklch(0.330 0.012 265);
+  --color-neutral-800:  oklch(0.278 0.010 265);
+  --color-neutral-850:  oklch(0.242 0.009 265);
+  --color-neutral-900:  oklch(0.210 0.008 265);
+  --color-neutral-950:  oklch(0.183 0.007 265);
+  --color-neutral-975:  oklch(0.163 0.006 265);
+  --color-neutral-1000: oklch(0.145 0.006 265);
+
+  /* primary — confident cool blue. Swap --primary-h to re-hue. */
+  --primary-h: 255;
+  --color-primary-300: oklch(0.780 0.110 var(--primary-h));
+  --color-primary-400: oklch(0.705 0.150 var(--primary-h));
+  --color-primary-500: oklch(0.625 0.175 var(--primary-h));
+  --color-primary-600: oklch(0.555 0.170 var(--primary-h));
+  --color-primary-700: oklch(0.470 0.150 var(--primary-h));
+
+  /* status ramps (foreground-tuned 400 + solid 500) */
+  --color-emerald-300: oklch(0.820 0.130 155);
+  --color-emerald-400: oklch(0.745 0.150 155);
+  --color-emerald-500: oklch(0.680 0.155 155);
+  --color-emerald-600: oklch(0.580 0.135 155);
+
+  --color-sky-300: oklch(0.840 0.100 215);
+  --color-sky-400: oklch(0.770 0.120 215);
+  --color-sky-500: oklch(0.715 0.130 215);
+  --color-sky-600: oklch(0.620 0.120 215);
+
+  --color-amber-300: oklch(0.880 0.110 80);
+  --color-amber-400: oklch(0.825 0.140 78);
+  --color-amber-500: oklch(0.780 0.150 75);
+  --color-amber-600: oklch(0.690 0.140 65);
+
+  --color-rose-300: oklch(0.770 0.130 22);
+  --color-rose-400: oklch(0.685 0.190 25);
+  --color-rose-500: oklch(0.630 0.215 25);
+  --color-rose-600: oklch(0.560 0.200 25);
+
+  --color-violet-300: oklch(0.800 0.110 295);
+  --color-violet-400: oklch(0.720 0.155 295);
+  --color-violet-500: oklch(0.660 0.180 295);
+  --color-violet-600: oklch(0.580 0.170 295);
+
+  /* type scale — compact, dashboard-tuned */
+  --text-2xs:  11px;
+  --text-xs:   12px;
+  --text-sm:   13px;
+  --text-base: 14px;
+  --text-md:   15px;
+  --text-lg:   17px;
+  --text-xl:   20px;
+  --text-2xl:  24px;
+  --text-3xl:  30px;
+  --text-4xl:  40px;
+  --text-5xl:  56px;
+  --text-6xl:  72px;
+
+  /* line-heights */
+  --leading-none:    1;
+  --leading-tight:   1.2;
+  --leading-snug:    1.35;
+  --leading-normal:  1.5;
+  --leading-relaxed: 1.65;
+
+  /* letter-spacing — tighten display, open up all-caps labels */
+  --tracking-tighter: -0.02em;
+  --tracking-tight:   -0.012em;
+  --tracking-normal:  0em;
+  --tracking-wide:    0.04em;
+  --tracking-caps:    0.08em;
+
+  /* radius — tight, technical */
+  --radius-xs:   3px;
+  --radius-sm:   5px;
+  --radius-md:   7px;
+  --radius-lg:   10px;
+  --radius-xl:   14px;
+  --radius-2xl:  20px;
+  --radius-pill: 999px;
+
+  /* shadows (dark-tuned) */
+  --shadow-xs:  0 1px 2px oklch(0 0 0 / 0.30);
+  --shadow-sm:  0 1px 2px oklch(0 0 0 / 0.30), 0 2px 4px oklch(0 0 0 / 0.24);
+  --shadow-md:  0 4px 12px oklch(0 0 0 / 0.34), 0 1px 2px oklch(0 0 0 / 0.30);
+  --shadow-lg:  0 12px 32px oklch(0 0 0 / 0.44), 0 2px 8px oklch(0 0 0 / 0.30);
+  --shadow-xl:  0 24px 60px oklch(0 0 0 / 0.50), 0 4px 12px oklch(0 0 0 / 0.34);
+
+  /* motion — calm, no overshoot */
+  --ease-out:      cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out:   cubic-bezier(0.45, 0, 0.2, 1);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ------------------------------------------------------------------ */
+/* 2. Semantic tokens — DARK (default)                                 */
+/* ------------------------------------------------------------------ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* chrome surfaces (neutral only) */
+  --background:        var(--color-neutral-1000);
+  --surface-sunken:    var(--color-neutral-975);
+  --surface-panel:     var(--color-neutral-950);
+  --card:              var(--color-neutral-900);
+  --popover:           var(--color-neutral-850);
+  --muted:             oklch(1 0 0 / 0.04);
+  --surface-hover:     oklch(1 0 0 / 0.04);
+  --surface-active:    oklch(1 0 0 / 0.07);
+
+  /* text */
+  --foreground:           var(--color-neutral-50);
+  --foreground-secondary: var(--color-neutral-300);
+  --muted-foreground:     var(--color-neutral-400);
+  --faint-foreground:     var(--color-neutral-500);
+
+  /* borders / ring */
+  --border:        var(--color-neutral-800);
+  --border-strong: var(--color-neutral-600);
+  --input:         var(--color-neutral-700);
+  --ring:          oklch(0.625 0.175 var(--primary-h) / 0.55);
+
+  /* primary */
+  --primary:            var(--color-primary-500);
+  --primary-hover:      var(--color-primary-400);
+  --primary-active:     var(--color-primary-600);
+  --primary-foreground: var(--color-neutral-0);
+
+  /* ---- STATUS TAXONOMY (data model: event lifecycle, links, audit) ---- */
+  --status-pending-fg:    var(--color-sky-300);
+  --status-pending-solid: var(--color-sky-500);
+  --status-pending-bg:    oklch(0.715 0.130 215 / 0.14);
+
+  --status-processing-fg:    var(--color-primary-300);
+  --status-processing-solid: var(--color-primary-500);
+  --status-processing-bg:    oklch(0.625 0.175 255 / 0.14);
+
+  --status-done-fg:    var(--color-emerald-400);
+  --status-done-solid: var(--color-emerald-500);
+  --status-done-bg:    oklch(0.680 0.155 155 / 0.14);
+
+  --status-dead-fg:    var(--color-rose-400);
+  --status-dead-solid: var(--color-rose-500);
+  --status-dead-bg:    oklch(0.630 0.215 25 / 0.15);
+
+  --status-linked-fg:    var(--color-emerald-400);
+  --status-linked-solid: var(--color-emerald-500);
+  --status-linked-bg:    oklch(0.680 0.155 155 / 0.14);
+
+  --status-conflict-fg:    var(--color-amber-400);
+  --status-conflict-solid: var(--color-amber-500);
+  --status-conflict-bg:    oklch(0.780 0.150 75 / 0.15);
+
+  --status-error-fg:    var(--color-rose-400);
+  --status-error-solid: var(--color-rose-500);
+  --status-error-bg:    oklch(0.630 0.215 25 / 0.15);
+
+  --status-skip-fg:    var(--color-neutral-400);
+  --status-skip-solid: var(--color-neutral-500);
+  --status-skip-bg:    oklch(1 0 0 / 0.06);
+
+  /* audit actions */
+  --action-create-fg:  var(--color-emerald-400);
+  --action-update-fg:  var(--color-primary-300);
+  --action-void-fg:    var(--color-amber-400);
+  --action-delete-fg:  var(--color-rose-400);
+  --action-skip-fg:    var(--color-neutral-400);
+  --action-conflict-fg:          var(--color-amber-400);
+  --action-conflict-resolved-fg: var(--color-violet-400);
+  --action-error-fg:   var(--color-rose-400);
+
+  /* system identity */
+  --system-internal-fg:    var(--color-primary-300);
+  --system-internal-solid: var(--color-primary-500);
+  --system-internal-bg:    oklch(0.625 0.175 255 / 0.14);
+
+  --system-quickbooks-fg:    var(--color-emerald-400);
+  --system-quickbooks-solid: var(--color-emerald-500);
+  --system-quickbooks-bg:    oklch(0.680 0.155 155 / 0.14);
+
+  /* ---- STATUS BADGE vocabulary (UI: the 9 sync statuses) ---- */
+  --sb-synced-fg:    var(--color-emerald-400); --sb-synced-fill:    oklch(0.680 0.155 155 / 0.14); --sb-synced-solid:    var(--color-emerald-500);
+  --sb-inflight-fg:  var(--color-sky-400);     --sb-inflight-fill:  oklch(0.715 0.130 215 / 0.14); --sb-inflight-solid:  var(--color-sky-500);
+  --sb-queued-fg:    var(--color-sky-400);     --sb-queued-fill:    oklch(0.715 0.130 215 / 0.14); --sb-queued-solid:    var(--color-sky-500);
+  --sb-conflict-fg:  var(--color-amber-400);   --sb-conflict-fill:  oklch(0.780 0.150 75 / 0.15);  --sb-conflict-solid:  var(--color-amber-500);
+  --sb-failed-fg:    var(--color-rose-400);    --sb-failed-fill:    oklch(0.630 0.215 25 / 0.15);  --sb-failed-solid:    var(--color-rose-500);
+  --sb-deadletter-fg: var(--color-rose-400);   --sb-deadletter-fill: oklch(0.630 0.215 25 / 0.15); --sb-deadletter-solid: var(--color-rose-500);
+  --sb-replayed-fg:  var(--color-violet-400);  --sb-replayed-fill:  oklch(0.660 0.180 295 / 0.15); --sb-replayed-solid:  var(--color-violet-500);
+  --sb-idle-fg:      var(--color-neutral-400); --sb-idle-fill:      oklch(1 0 0 / 0.06);            --sb-idle-solid:      var(--color-neutral-500);
+  --sb-skipped-fg:   var(--color-neutral-400); --sb-skipped-fill:   oklch(1 0 0 / 0.06);            --sb-skipped-solid:   var(--color-neutral-500);
+
+  --inset-top: inset 0 1px 0 oklch(1 0 0 / 0.04);
+
+  /* shadcn/ui bridge — alias the names shadcn primitives expect onto our
+     tokens, without inventing colors, so `shadcn add` renders on-brand. */
+  --card-foreground:       var(--foreground);
+  --popover-foreground:    var(--foreground);
+  --secondary:             var(--popover);
+  --secondary-foreground:  var(--foreground);
+  --accent:                var(--muted);
+  --accent-foreground:     var(--foreground);
+  --destructive:           var(--status-dead-solid);
+  --destructive-foreground: var(--primary-foreground);
+  --radius:                var(--radius-md);
 }
 
+/* ------------------------------------------------------------------ */
+/* 2b. Semantic tokens — LIGHT (.light)                                */
+/* ------------------------------------------------------------------ */
+.light {
+  --background:        oklch(0.992 0.002 265);
+  --surface-sunken:    oklch(0.972 0.003 265);
+  --surface-panel:     oklch(0.985 0.002 265);
+  --card:              oklch(1 0 0);
+  --popover:           oklch(1 0 0);
+  --muted:             oklch(0.55 0.02 265 / 0.05);
+  --surface-hover:     oklch(0.55 0.02 265 / 0.05);
+  --surface-active:    oklch(0.55 0.02 265 / 0.09);
+
+  --foreground:           oklch(0.220 0.012 265);
+  --foreground-secondary: oklch(0.430 0.013 265);
+  --muted-foreground:     oklch(0.530 0.013 265);
+  --faint-foreground:     oklch(0.630 0.012 265);
+
+  --border:        oklch(0.920 0.005 265);
+  --border-strong: oklch(0.800 0.008 265);
+  --input:         oklch(0.875 0.006 265);
+
+  /* status taxonomy: deepen foregrounds for AA on white; keep tints light */
+  --status-pending-fg:    var(--color-sky-600);
+  --status-processing-fg: var(--color-primary-600);
+  --status-done-fg:       var(--color-emerald-600);
+  --status-dead-fg:       var(--color-rose-600);
+  --status-linked-fg:     var(--color-emerald-600);
+  --status-conflict-fg:   var(--color-amber-600);
+  --status-error-fg:      var(--color-rose-600);
+  --status-skip-fg:       oklch(0.530 0.013 265);
+
+  --status-pending-bg:    oklch(0.715 0.130 215 / 0.12);
+  --status-processing-bg: oklch(0.625 0.175 255 / 0.12);
+  --status-done-bg:       oklch(0.680 0.155 155 / 0.12);
+  --status-dead-bg:       oklch(0.630 0.215 25 / 0.12);
+  --status-linked-bg:     oklch(0.680 0.155 155 / 0.12);
+  --status-conflict-bg:   oklch(0.780 0.150 75 / 0.14);
+  --status-error-bg:      oklch(0.630 0.215 25 / 0.12);
+  --status-skip-bg:       oklch(0.45 0.02 265 / 0.07);
+
+  --action-create-fg:  var(--color-emerald-600);
+  --action-update-fg:  var(--color-primary-600);
+  --action-void-fg:    var(--color-amber-600);
+  --action-delete-fg:  var(--color-rose-600);
+  --action-skip-fg:    oklch(0.530 0.013 265);
+  --action-conflict-fg:          var(--color-amber-600);
+  --action-conflict-resolved-fg: var(--color-violet-600);
+  --action-error-fg:   var(--color-rose-600);
+
+  --system-internal-fg:    var(--color-primary-600);
+  --system-quickbooks-fg:  var(--color-emerald-600);
+  --system-internal-bg:    oklch(0.625 0.175 255 / 0.12);
+  --system-quickbooks-bg:  oklch(0.680 0.155 155 / 0.12);
+
+  /* status badge vocabulary — deepen fg, lighten fills */
+  --sb-synced-fg:     var(--color-emerald-600); --sb-synced-fill:     oklch(0.680 0.155 155 / 0.12);
+  --sb-inflight-fg:   var(--color-sky-600);     --sb-inflight-fill:   oklch(0.715 0.130 215 / 0.12);
+  --sb-queued-fg:     var(--color-sky-600);     --sb-queued-fill:     oklch(0.715 0.130 215 / 0.12);
+  --sb-conflict-fg:   var(--color-amber-600);   --sb-conflict-fill:   oklch(0.780 0.150 75 / 0.14);
+  --sb-failed-fg:     var(--color-rose-600);    --sb-failed-fill:     oklch(0.630 0.215 25 / 0.12);
+  --sb-deadletter-fg: var(--color-rose-600);    --sb-deadletter-fill: oklch(0.630 0.215 25 / 0.12);
+  --sb-replayed-fg:   var(--color-violet-600);  --sb-replayed-fill:   oklch(0.660 0.180 295 / 0.14);
+  --sb-idle-fg:       oklch(0.530 0.013 265);   --sb-idle-fill:       oklch(0.45 0.02 265 / 0.07);
+  --sb-skipped-fg:    oklch(0.530 0.013 265);   --sb-skipped-fill:    oklch(0.45 0.02 265 / 0.07);
+
+  --inset-top: inset 0 1px 0 oklch(1 0 0 / 0.6);
+
+  --shadow-xs:  0 1px 2px oklch(0.4 0.02 265 / 0.08);
+  --shadow-sm:  0 1px 2px oklch(0.4 0.02 265 / 0.08), 0 2px 4px oklch(0.4 0.02 265 / 0.06);
+  --shadow-md:  0 4px 12px oklch(0.4 0.02 265 / 0.10), 0 1px 2px oklch(0.4 0.02 265 / 0.06);
+  --shadow-lg:  0 12px 32px oklch(0.4 0.02 265 / 0.14), 0 2px 8px oklch(0.4 0.02 265 / 0.08);
+  --shadow-xl:  0 24px 60px oklch(0.4 0.02 265 / 0.18), 0 4px 12px oklch(0.4 0.02 265 / 0.10);
+}
+
+/* ------------------------------------------------------------------ */
+/* 3. Bind semantics to Tailwind utilities (bg-*, text-*, border-*)    */
+/* ------------------------------------------------------------------ */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background:           var(--background);
+  --color-surface-sunken:       var(--surface-sunken);
+  --color-surface-panel:        var(--surface-panel);
+  --color-card:                 var(--card);
+  --color-card-foreground:      var(--card-foreground);
+  --color-popover:              var(--popover);
+  --color-popover-foreground:   var(--popover-foreground);
+  --color-muted:                var(--muted);
+  --color-surface-hover:        var(--surface-hover);
+  --color-surface-active:       var(--surface-active);
+
+  --color-foreground:           var(--foreground);
+  --color-foreground-secondary: var(--foreground-secondary);
+  --color-muted-foreground:     var(--muted-foreground);
+  --color-faint-foreground:     var(--faint-foreground);
+
+  --color-border:               var(--border);
+  --color-border-strong:        var(--border-strong);
+  --color-input:                var(--input);
+  --color-ring:                 var(--ring);
+
+  --color-primary:              var(--primary);
+  --color-primary-hover:        var(--primary-hover);
+  --color-primary-active:       var(--primary-active);
+  --color-primary-foreground:   var(--primary-foreground);
+
+  --color-secondary:            var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent:               var(--accent);
+  --color-accent-foreground:    var(--accent-foreground);
+  --color-destructive:          var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  --color-status-pending-fg:    var(--status-pending-fg);
+  --color-status-pending-bg:    var(--status-pending-bg);
+  --color-status-processing-fg: var(--status-processing-fg);
+  --color-status-processing-bg: var(--status-processing-bg);
+  --color-status-done-fg:       var(--status-done-fg);
+  --color-status-done-bg:       var(--status-done-bg);
+  --color-status-dead-fg:       var(--status-dead-fg);
+  --color-status-dead-bg:       var(--status-dead-bg);
+  --color-status-linked-fg:     var(--status-linked-fg);
+  --color-status-linked-bg:     var(--status-linked-bg);
+  --color-status-conflict-fg:   var(--status-conflict-fg);
+  --color-status-conflict-bg:   var(--status-conflict-bg);
+  --color-status-error-fg:      var(--status-error-fg);
+  --color-status-error-bg:      var(--status-error-bg);
+  --color-status-skip-fg:       var(--status-skip-fg);
+  --color-status-skip-bg:       var(--status-skip-bg);
+
+  --color-action-create-fg:            var(--action-create-fg);
+  --color-action-update-fg:            var(--action-update-fg);
+  --color-action-void-fg:              var(--action-void-fg);
+  --color-action-delete-fg:            var(--action-delete-fg);
+  --color-action-skip-fg:              var(--action-skip-fg);
+  --color-action-conflict-fg:          var(--action-conflict-fg);
+  --color-action-conflict-resolved-fg: var(--action-conflict-resolved-fg);
+  --color-action-error-fg:             var(--action-error-fg);
+
+  --color-system-internal-fg:     var(--system-internal-fg);
+  --color-system-internal-bg:     var(--system-internal-bg);
+  --color-system-quickbooks-fg:   var(--system-quickbooks-fg);
+  --color-system-quickbooks-bg:   var(--system-quickbooks-bg);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* ------------------------------------------------------------------ */
+/* 4. Base layer                                                       */
+/* ------------------------------------------------------------------ */
+@layer base {
+  * { border-color: var(--color-border); }
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    font-feature-settings: "cv01" 1, "ss01" 1;
+    -webkit-font-smoothing: antialiased;
+  }
+  code, kbd, samp, pre { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  /* visible AA focus ring everywhere */
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--color-background), 0 0 0 4px var(--color-ring);
+    border-radius: var(--radius-sm);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ------------------------------------------------------------------ */
+/* 5. Keyframes (referenced by components via arbitrary animate-*)     */
+/* ------------------------------------------------------------------ */
+@keyframes lb-pulse {
+  0%   { transform: scale(1);   opacity: 0.7; }
+  70%  { transform: scale(2.6); opacity: 0; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+@keyframes lb-spin {
+  to { transform: rotate(360deg); }
 }
