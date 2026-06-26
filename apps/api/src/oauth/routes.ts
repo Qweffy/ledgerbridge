@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Database } from "../../db/types";
 import type { QboConfig } from "../config";
@@ -11,20 +11,42 @@ export interface OAuthRouteDeps {
   fetchImpl?: typeof fetch;
 }
 
+const STATE_TTL_MS = 10 * 60 * 1000;
+
+// CSRF state, signed and stateless: `${nonce}.${exp}.${hmac}`. Being stateless,
+// it survives a server restart (the in-memory alternative did not) and an
+// attacker can't forge one without the secret.
+function signState(secret: string): string {
+  const nonce = randomBytes(16).toString("hex");
+  const exp = Date.now() + STATE_TTL_MS;
+  const payload = `${nonce}.${exp}`;
+  const sig = createHmac("sha256", secret).update(payload).digest("hex");
+  return `${payload}.${sig}`;
+}
+
+function verifyState(state: string, secret: string): boolean {
+  const parts = state.split(".");
+  if (parts.length !== 3) return false;
+  const [nonce, expStr, sig] = parts;
+  if (!nonce || !expStr || !sig) return false;
+  const expected = createHmac("sha256", secret).update(`${nonce}.${expStr}`).digest("hex");
+  if (sig.length !== expected.length) return false;
+  if (!timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return false;
+  const exp = Number(expStr);
+  return Number.isFinite(exp) && exp > Date.now();
+}
+
 // The QBO OAuth2 authorization-code flow:
-//   /oauth/connect  → redirect the user to Intuit's consent screen (with a
-//                     single-use `state` we remember to defend against CSRF).
-//   /oauth/callback → Intuit redirects back with code + realmId; we validate the
+//   /oauth/connect  → redirect the user to Intuit's consent screen (with a signed
+//                     `state` to defend against CSRF).
+//   /oauth/callback → Intuit redirects back with code + realmId; we verify the
 //                     state, exchange the code for tokens, and store them.
 export function registerOAuthRoutes(app: FastifyInstance, deps: OAuthRouteDeps): void {
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const STATE_TTL_MS = 10 * 60 * 1000;
-  const states = new Map<string, number>();
+  const secret = deps.cfg.clientSecret;
 
   app.get("/oauth/connect", async (_req, reply) => {
-    const state = randomBytes(16).toString("hex");
-    states.set(state, Date.now() + STATE_TTL_MS);
-    return reply.redirect(buildAuthorizeUrl(deps.cfg, state));
+    return reply.redirect(buildAuthorizeUrl(deps.cfg, signState(secret)));
   });
 
   app.get("/oauth/callback", async (req, reply) => {
@@ -38,11 +60,9 @@ export function registerOAuthRoutes(app: FastifyInstance, deps: OAuthRouteDeps):
     if (!query.code || !query.state || !query.realmId) {
       return reply.code(400).send({ error: "missing code, state or realmId" });
     }
-    const expiry = states.get(query.state);
-    if (!expiry || expiry < Date.now()) {
+    if (!verifyState(query.state, secret)) {
       return reply.code(400).send({ error: "invalid or expired state" });
     }
-    states.delete(query.state);
 
     const tokens = await exchangeCode(deps.cfg, query.code, fetchImpl);
     await saveTokens(deps.db, query.realmId, tokens);
