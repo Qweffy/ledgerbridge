@@ -26,6 +26,9 @@ export interface QboInvoiceState extends QboRef {
 // in-memory fake instead of hitting Intuit.
 export interface QboInvoiceOps {
   findByDocNumber(docNumber: string): Promise<QboRef | undefined>;
+  // All QBO invoices with this DocNumber, with amount — the reconciler needs every
+  // candidate (to detect an ambiguous >1 match) and the amount (to verify a match).
+  listByDocNumber(docNumber: string): Promise<QboInvoiceState[]>;
   create(invoice: Record<string, unknown>, requestId: string): Promise<QboRef>;
   read(id: string): Promise<QboInvoiceState>;
   update(invoice: Record<string, unknown>): Promise<QboRef>;
@@ -51,7 +54,7 @@ interface PaymentEnvelope {
   Payment: QboRef;
 }
 interface QueryEnvelope {
-  QueryResponse: { Invoice?: QboRef[] };
+  QueryResponse: { Invoice?: QboInvoiceBody[] };
 }
 
 // QBO has no boolean "voided" flag — a void zeroes the lines and appends "Voided"
@@ -80,6 +83,13 @@ export function createQboInvoiceOps(deps: QboClientDeps): QboInvoiceOps {
         `select Id, SyncToken from Invoice where DocNumber = '${docNumber}'`,
       )) as QueryEnvelope;
       return res.QueryResponse.Invoice?.[0];
+    },
+    async listByDocNumber(docNumber) {
+      const res = (await qboQuery(
+        deps,
+        `select Id, SyncToken, TotalAmt, DocNumber, PrivateNote from Invoice where DocNumber = '${docNumber}'`,
+      )) as QueryEnvelope;
+      return (res.QueryResponse.Invoice ?? []).map(toState);
     },
     async create(invoice, requestId) {
       const res = (await createInvoice(deps, invoice, requestId)) as InvoiceEnvelope;

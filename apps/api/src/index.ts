@@ -8,9 +8,10 @@ const { db } = await import("../db");
 const { buildServer } = await import("./server");
 const { loadQboConfig } = await import("./config");
 const { createWebhookSink, noopSink } = await import("./internal/sink");
-const { getInvoice, getPayment, updateInvoice, deleteInvoice } = await import("./internal/service");
+const { getInvoice, getPayment, listInvoices, updateInvoice, deleteInvoice } = await import("./internal/service");
 const { createQboInvoiceOps, createQboPaymentOps } = await import("./bridge/qbo-ops");
 const { startWorker } = await import("./bridge/worker");
+const { startReconciler } = await import("./bridge/reconcile");
 
 const PORT = Number(process.env.PORT ?? 3001);
 
@@ -46,6 +47,7 @@ const realmId = process.env.QBO_REALM_ID;
 const customerRef = process.env.QBO_DEFAULT_CUSTOMER;
 const itemRef = process.env.QBO_DEFAULT_ITEM;
 let worker: { stop: () => Promise<void> } | undefined;
+let reconciler: { stop: () => Promise<void> } | undefined;
 if (qbo && realmId && customerRef && itemRef) {
   const ops = createQboInvoiceOps({ db, cfg: qbo.cfg, realmId });
   const paymentOps = createQboPaymentOps({ db, cfg: qbo.cfg, realmId });
@@ -71,12 +73,23 @@ if (qbo && realmId && customerRef && itemRef) {
     onError: (err) => app.log.error(err),
   });
   app.log.info("sync worker started");
+
+  // Periodic safety net: match unlinked invoices + recover drift from dropped webhooks.
+  reconciler = startReconciler(db, {
+    qbo: ops,
+    refetchInternal: (id) => getInvoice(db, id),
+    listInternalInvoices: () => listInvoices(db),
+    realmId,
+    onError: (err) => app.log.error(err),
+  });
+  app.log.info("reconciler started");
 } else {
   app.log.warn("sync worker not started (missing QBO realm/defaults)");
 }
 
 async function shutdown(): Promise<void> {
   app.log.info("shutting down");
+  await reconciler?.stop();
   await worker?.stop();
   await app.close();
   process.exit(0);

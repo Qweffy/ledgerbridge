@@ -107,6 +107,12 @@ export async function getPayment(
   return payment;
 }
 
+// The reconciler scans every internal invoice to match unlinked ones and recover
+// dropped changes.
+export async function listInvoices(db: Database): Promise<InternalInvoice[]> {
+  return db.select().from(internalInvoices);
+}
+
 export async function createInvoice(
   db: Database,
   sink: ChangeSink,

@@ -44,6 +44,12 @@ Built and tested so far:
   invoice (so QBO's invoice Balance reflects it). Idempotent two ways: a `payment` link row
   (skip if already synced) and a stable `Request-Id` (Intuit dedups a retried create — Payments have
   no `DocNumber`). The reverse (a payment entered in QBO → internal) is deliberately deferred.
+- **Reconciler (the safety net)** — a periodic pass that **matches** invoices existing on both sides
+  with no link (by DocNumber + amount; ambiguity or a mismatch is flagged, never blindly linked) and
+  **recovers drift** from dropped webhooks: it refetches both sides and, when a version/hash has moved
+  past what we last synced, enqueues a **synthetic event** into the same idempotent outbox so the
+  worker re-converges the state. Skips anything the worker already has in flight; writes one heartbeat
+  audit row per pass. (Per-link refetch here; QBO's CDC endpoint is the production scale path.)
 
 Verified end-to-end against a real QBO sandbox (an internal invoice propagates to a QBO invoice;
 re-delivered webhooks are dropped). The reverse direction's logic — including the no-loop round trip —

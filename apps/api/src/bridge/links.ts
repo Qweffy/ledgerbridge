@@ -40,6 +40,19 @@ export async function getLinkById(db: Database, id: number): Promise<LinkRow | u
   return row;
 }
 
+// The reconciler walks every link (optionally of one status) to check both sides
+// for drift.
+export async function listLinks(
+  db: Database,
+  entityType: EntityType,
+  status?: LinkStatus,
+): Promise<LinkRow[]> {
+  const where = status
+    ? and(eq(links.entityType, entityType), eq(links.status, status))
+    : eq(links.entityType, entityType);
+  return db.select().from(links).where(where);
+}
+
 // Flag a link as conflicted without touching its last-synced basis (snapshot /
 // versions / hash), so re-evaluation while it's held compares against the same point.
 export async function markLinkConflict(

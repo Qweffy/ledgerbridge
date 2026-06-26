@@ -34,6 +34,15 @@ export function createFakeQbo() {
       const inv = byId.get(id);
       return inv ? { Id: inv.Id, SyncToken: inv.SyncToken } : undefined;
     },
+    async listByDocNumber(docNumber) {
+      const out = [];
+      for (const inv of byId.values()) {
+        if (inv.DocNumber === docNumber) {
+          out.push({ Id: inv.Id, SyncToken: inv.SyncToken, totalCents: inv.totalCents, voided: inv.voided, docNumber: inv.DocNumber });
+        }
+      }
+      return out;
+    },
     async create(invoice, requestId) {
       createCalls += 1;
       lastCreateRequestId = requestId;
@@ -95,9 +104,9 @@ export function createFakeQbo() {
     paymentsById,
     byId,
     byDoc,
-    seed(docNumber: string): string {
+    seed(docNumber: string, totalCents = 0): string {
       const id = String((seq += 1));
-      byId.set(id, { Id: id, SyncToken: "0", DocNumber: docNumber, voided: false, totalCents: 0 });
+      byId.set(id, { Id: id, SyncToken: "0", DocNumber: docNumber, voided: false, totalCents });
       byDoc.set(docNumber, id);
       return id;
     },
