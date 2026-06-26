@@ -40,8 +40,8 @@ export function createQboInvoiceOps(deps: QboClientDeps): QboInvoiceOps {
       )) as QueryEnvelope;
       return res.QueryResponse.Invoice?.[0];
     },
-    async create(invoice) {
-      const res = (await createInvoice(deps, invoice)) as InvoiceEnvelope;
+    async create(invoice, requestId) {
+      const res = (await createInvoice(deps, invoice, requestId)) as InvoiceEnvelope;
       return res.Invoice;
     },
     async read(id) {

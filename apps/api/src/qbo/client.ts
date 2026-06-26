@@ -2,10 +2,9 @@ import type { QboConfig } from "../config";
 import type { Database } from "../../db/types";
 import { getValidAccessToken } from "../oauth/manager";
 
-// A thin QBO Accounting API client for Invoices. Mapping internal invoices to the
-// QBO Invoice shape lands in M4; here the client just talks to the API with a
-// fresh access token and the pinned minorversion. Response shapes are `unknown`
-// until M4 types them.
+// A thin QBO Accounting API client for Invoices: talks to the API with a fresh
+// access token and the pinned minorversion. Response shapes are returned as
+// `unknown` and narrowed by the caller.
 export interface QboClientDeps {
   db: Database;
   cfg: QboConfig;
@@ -18,6 +17,7 @@ async function qboRequest(
   method: "GET" | "POST",
   path: string,
   body?: unknown,
+  extraHeaders?: Record<string, string>,
 ): Promise<unknown> {
   const token = await getValidAccessToken(deps.db, deps.cfg, deps.realmId, {
     fetchImpl: deps.fetchImpl,
@@ -30,6 +30,7 @@ async function qboRequest(
       authorization: `Bearer ${token}`,
       accept: "application/json",
       ...(body === undefined ? {} : { "content-type": "application/json" }),
+      ...extraHeaders,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -39,8 +40,20 @@ async function qboRequest(
   return res.json();
 }
 
-export function createInvoice(deps: QboClientDeps, invoice: unknown): Promise<unknown> {
-  return qboRequest(deps, "POST", "/invoice", invoice);
+// requestId becomes QBO's Request-Id header — Intuit dedupes identical Request-Ids
+// within a window, so a retried create after a lost response won't double-insert.
+export function createInvoice(
+  deps: QboClientDeps,
+  invoice: unknown,
+  requestId?: string,
+): Promise<unknown> {
+  return qboRequest(
+    deps,
+    "POST",
+    "/invoice",
+    invoice,
+    requestId ? { "Request-Id": requestId } : undefined,
+  );
 }
 
 export function getInvoice(deps: QboClientDeps, id: string): Promise<unknown> {

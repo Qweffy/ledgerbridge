@@ -8,7 +8,9 @@ import type { Database } from "../../db/types";
 export const changeEventSchema = z.object({
   eventId: z.string().min(1),
   entity: z.enum(["invoice", "payment"]),
-  entityId: z.string().min(1),
+  // Constrained at the boundary so an id can be safely used as a QBO DocNumber in
+  // a query (no injection) — rejected with 400 otherwise.
+  entityId: z.string().regex(/^[A-Za-z0-9:_-]+$/),
   changeType: z.enum(["create", "update", "pay", "delete"]),
   version: z.number().int(),
   occurredAt: z.string(),

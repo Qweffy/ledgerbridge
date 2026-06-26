@@ -25,7 +25,9 @@ function captureSink(): { sink: ChangeSink; events: ChangeEvent[] } {
   return { sink: { emit: async (e) => void events.push(e) }, events };
 }
 
-// In-memory QBO double: tracks invoices by Id and by DocNumber, counts real creates.
+// In-memory QBO double: tracks invoices by Id and DocNumber, and records what the
+// processor actually asked it to do (creates, updates, the request id, the void
+// SyncToken) so tests can assert the side effects — not just the wiring.
 function createFakeQbo() {
   interface Inv {
     Id: string;
@@ -37,6 +39,10 @@ function createFakeQbo() {
   const byDoc = new Map<string, string>();
   let seq = 100;
   let createCalls = 0;
+  let updateCalls = 0;
+  let lastCreateRequestId: string | undefined;
+  let lastUpdate: Record<string, unknown> | undefined;
+  let lastVoidSyncToken: string | undefined;
 
   const ops: QboInvoiceOps = {
     async findByDocNumber(docNumber) {
@@ -45,8 +51,9 @@ function createFakeQbo() {
       const inv = byId.get(id);
       return inv ? { Id: inv.Id, SyncToken: inv.SyncToken } : undefined;
     },
-    async create(invoice) {
+    async create(invoice, requestId) {
       createCalls += 1;
+      lastCreateRequestId = requestId;
       const id = String((seq += 1));
       const docNumber = String((invoice as { DocNumber?: unknown }).DocNumber ?? id);
       byId.set(id, { Id: id, SyncToken: "0", DocNumber: docNumber, voided: false });
@@ -59,13 +66,16 @@ function createFakeQbo() {
       return { Id: inv.Id, SyncToken: inv.SyncToken };
     },
     async update(invoice) {
+      updateCalls += 1;
+      lastUpdate = invoice;
       const id = String((invoice as { Id?: unknown }).Id);
       const inv = byId.get(id);
       if (!inv) throw new Error(`qbo invoice ${id} not found`);
       inv.SyncToken = String(Number(inv.SyncToken) + 1);
       return { Id: inv.Id, SyncToken: inv.SyncToken };
     },
-    async voidInvoice(id) {
+    async voidInvoice(id, syncToken) {
+      lastVoidSyncToken = syncToken;
       const inv = byId.get(id);
       if (inv) inv.voided = true;
     },
@@ -75,15 +85,26 @@ function createFakeQbo() {
     ops,
     byId,
     byDoc,
-    get createCalls() {
-      return createCalls;
-    },
-    // Pretend QBO already has an invoice (e.g. created on a lost attempt).
     seed(docNumber: string): string {
       const id = String((seq += 1));
       byId.set(id, { Id: id, SyncToken: "0", DocNumber: docNumber, voided: false });
       byDoc.set(docNumber, id);
       return id;
+    },
+    get createCalls() {
+      return createCalls;
+    },
+    get updateCalls() {
+      return updateCalls;
+    },
+    get lastCreateRequestId() {
+      return lastCreateRequestId;
+    },
+    get lastUpdate() {
+      return lastUpdate;
+    },
+    get lastVoidSyncToken() {
+      return lastVoidSyncToken;
     },
   };
 }
@@ -92,6 +113,12 @@ function first<T>(arr: T[]): T {
   const [v] = arr;
   if (v === undefined) throw new Error("expected at least one element");
   return v;
+}
+
+// Reach into a QBO invoice body's first line amount for assertions.
+function lineAmount(body: Record<string, unknown> | undefined): number | undefined {
+  const line = (body?.Line as Array<{ Amount?: number }> | undefined)?.[0];
+  return line?.Amount;
 }
 
 describe("bridge — internal → QBO sync core", () => {
@@ -115,7 +142,7 @@ describe("bridge — internal → QBO sync core", () => {
     await h.close();
   });
 
-  it("internal create → one QBO invoice; a re-delivered webhook is idempotent", async () => {
+  it("internal create → one QBO invoice with a stable request id; re-delivery is idempotent", async () => {
     const { sink, events } = captureSink();
     const inv = await createInvoice(h.db, sink, { customerName: "Acme", amountCents: 12480 });
     const event = first(events);
@@ -126,6 +153,8 @@ describe("bridge — internal → QBO sync core", () => {
     expect(await processOne(h.db, deps)).toBe("processed");
     expect(fake.createCalls).toBe(1);
     expect(fake.byId.size).toBe(1);
+    // the create carried a stable idempotency key (→ QBO Request-Id header)
+    expect(fake.lastCreateRequestId).toBe(`internal:${inv.id}:1`);
 
     const link = await getLinkByInternalId(h.db, "invoice", inv.id);
     expect(link?.qboId).toBe(fake.byDoc.get(inv.id));
@@ -139,53 +168,84 @@ describe("bridge — internal → QBO sync core", () => {
     expect(audits.map((a) => a.action)).toContain("create");
   });
 
-  it("editing the invoice updates QBO and never duplicates", async () => {
-    const { sink, events } = captureSink();
-    const inv = await createInvoice(h.db, sink, { customerName: "Acme", amountCents: 1000 });
-    await enqueueInternalEvent(h.db, first(events));
-    await processOne(h.db, deps);
-
-    await updateInvoice(h.db, sink, inv.id, { amountCents: 2000 });
-    await enqueueInternalEvent(h.db, events[1] as ChangeEvent);
-    await processOne(h.db, deps);
-
-    expect(fake.createCalls).toBe(1);
-    expect(fake.byId.size).toBe(1);
-  });
-
-  it("timeout-after-write: an existing QBO invoice with no link is adopted, not duplicated (money shot)", async () => {
-    const { sink, events } = captureSink();
-    const inv = await createInvoice(h.db, sink, { customerName: "Acme", amountCents: 5000 });
-    // QBO already has it (created last attempt) but our link write was lost.
-    fake.seed(inv.id);
-    expect(fake.createCalls).toBe(0);
-
-    await enqueueInternalEvent(h.db, first(events));
-    await processOne(h.db, deps);
-
-    expect(fake.createCalls).toBe(0); // adopted, no new create
-    expect(fake.byId.size).toBe(1);
-    const link = await getLinkByInternalId(h.db, "invoice", inv.id);
-    expect(link?.qboId).toBe(fake.byDoc.get(inv.id));
-  });
-
-  it("internal delete → voids the linked QBO invoice", async () => {
+  it("editing the invoice updates QBO (with the current amount) and never duplicates", async () => {
     const { sink, events } = captureSink();
     const inv = await createInvoice(h.db, sink, { customerName: "Acme", amountCents: 1000 });
     await enqueueInternalEvent(h.db, first(events));
     await processOne(h.db, deps);
     const qboId = fake.byDoc.get(inv.id);
 
+    await updateInvoice(h.db, sink, inv.id, { amountCents: 2000 });
+    await enqueueInternalEvent(h.db, events[1] as ChangeEvent);
+    await processOne(h.db, deps);
+
+    expect(fake.createCalls).toBe(1); // still one QBO invoice
+    expect(fake.updateCalls).toBe(1); // the edit was actually applied
+    expect(lineAmount(fake.lastUpdate)).toBe(20); // $20.00 == 2000 cents
+    expect(qboId && fake.byId.get(qboId)?.SyncToken).toBe("1");
+    const link = await getLinkByInternalId(h.db, "invoice", inv.id);
+    expect(link?.lastInternalVersion).toBe(2);
+  });
+
+  it("re-delivery of an unchanged invoice is short-circuited (no QBO call)", async () => {
+    const { sink, events } = captureSink();
+    const inv = await createInvoice(h.db, sink, { customerName: "Acme", amountCents: 1000 });
+    await enqueueInternalEvent(h.db, first(events));
+    await processOne(h.db, deps);
+    expect(fake.createCalls).toBe(1);
+
+    // a fresh event id for the same, unchanged invoice (e.g. a reconciler re-enqueue)
+    const redelivery: ChangeEvent = {
+      eventId: "internal:redeliver:1",
+      entity: "invoice",
+      entityId: inv.id,
+      changeType: "update",
+      version: 1,
+      occurredAt: new Date().toISOString(),
+    };
+    expect(await enqueueInternalEvent(h.db, redelivery)).toBe("enqueued");
+    await processOne(h.db, deps);
+
+    expect(fake.createCalls).toBe(1);
+    expect(fake.updateCalls).toBe(0); // nothing pushed to QBO
+    const audits = await h.db.select().from(auditLog);
+    expect(audits.map((a) => a.action)).toContain("skip");
+  });
+
+  it("timeout-after-write: an existing QBO invoice with no link is adopted and updated, not duplicated (money shot)", async () => {
+    const { sink, events } = captureSink();
+    const inv = await createInvoice(h.db, sink, { customerName: "Acme", amountCents: 5000 });
+    const seededId = fake.seed(inv.id); // QBO already has it; our link write was lost
+
+    await enqueueInternalEvent(h.db, first(events));
+    await processOne(h.db, deps);
+
+    expect(fake.createCalls).toBe(0); // adopted, no new create
+    expect(fake.updateCalls).toBe(1); // reflected current state onto the existing one
+    expect(fake.byId.get(seededId)?.SyncToken).toBe("1");
+    const link = await getLinkByInternalId(h.db, "invoice", inv.id);
+    expect(link?.qboId).toBe(seededId);
+  });
+
+  it("internal delete → voids the linked QBO invoice with its current SyncToken", async () => {
+    const { sink, events } = captureSink();
+    const inv = await createInvoice(h.db, sink, { customerName: "Acme", amountCents: 1000 });
+    await enqueueInternalEvent(h.db, first(events));
+    await processOne(h.db, deps);
+    const qboId = fake.byDoc.get(inv.id);
+    expect(qboId).toBeDefined();
+
     await deleteInvoice(h.db, sink, inv.id);
     await enqueueInternalEvent(h.db, events[1] as ChangeEvent);
     await processOne(h.db, deps);
 
     expect(qboId && fake.byId.get(qboId)?.voided).toBe(true);
+    expect(fake.lastVoidSyncToken).toBe("0");
     const audits = await h.db.select().from(auditLog);
     expect(audits.map((a) => a.action)).toContain("void");
   });
 
-  it("a failing event retries with backoff, then dead-letters at max attempts", async () => {
+  it("a failing event audits the error, retries with backoff, then dead-letters at max attempts", async () => {
     const { sink, events } = captureSink();
     await createInvoice(h.db, sink, { customerName: "Acme", amountCents: 1000 });
     const event = first(events);
@@ -213,15 +273,40 @@ describe("bridge — internal → QBO sync core", () => {
     expect(ev?.status).toBe("pending");
     expect(ev?.attempts).toBe(1);
     expect(ev?.lastError).toContain("boom");
+    // first retry waits the base backoff (1s), not 2s
+    expect(ev?.nextAttemptAt.getTime()).toBe(t0.getTime() + 1000);
 
     const later: WorkerDeps = { ...failing, now: () => new Date(t0.getTime() + 60_000) };
     await processOne(h.db, later);
     [ev] = await h.db.select().from(syncEvents).where(eq(syncEvents.eventId, event.eventId));
     expect(ev?.status).toBe("dead");
     expect(ev?.attempts).toBe(2);
+
+    // failures are auditable, not just the final dead-letter
+    const errors = await h.db.select().from(auditLog).where(eq(auditLog.result, "error"));
+    expect(errors.length).toBe(2);
   });
 
-  it("ingest verifies the HMAC signature and enqueues idempotently", async () => {
+  it("reclaims a stale `processing` lease left by a crashed worker", async () => {
+    const { sink, events } = captureSink();
+    await createInvoice(h.db, sink, { customerName: "Acme", amountCents: 1000 });
+    const event = first(events);
+    await enqueueInternalEvent(h.db, event);
+
+    // simulate a crash: the row was claimed (processing) long ago and never finished
+    const stale = new Date(Date.now() - 5 * 60_000);
+    await h.db
+      .update(syncEvents)
+      .set({ status: "processing", lockedAt: stale, lockedBy: "dead-worker", attempts: 1 })
+      .where(eq(syncEvents.eventId, event.eventId));
+
+    expect(await processOne(h.db, deps)).toBe("processed");
+    const [ev] = await h.db.select().from(syncEvents).where(eq(syncEvents.eventId, event.eventId));
+    expect(ev?.status).toBe("done");
+    expect(fake.createCalls).toBe(1);
+  });
+
+  it("ingest verifies the HMAC signature, rejects bad json/sig, and enqueues idempotently", async () => {
     const secret = "whsec";
     const app = buildServer({ db: h.db, sink: noopSink, bridge: { secret } });
     const event = {
@@ -243,13 +328,23 @@ describe("bridge — internal → QBO sync core", () => {
     const dup = await app.inject({ method: "POST", url: "/webhooks/internal", headers, payload: body });
     expect(dup.json()).toMatchObject({ status: "duplicate" });
 
-    const bad = await app.inject({
+    const badSig = await app.inject({
       method: "POST",
       url: "/webhooks/internal",
       headers: { "content-type": "application/json", "x-lb-signature": "sha256=deadbeef" },
       payload: body,
     });
-    expect(bad.statusCode).toBe(401);
+    expect(badSig.statusCode).toBe(401);
+
+    // a valid signature over a malformed (non-event) body is a 400, not a 500
+    const junk = "not json";
+    const junkOk = await app.inject({
+      method: "POST",
+      url: "/webhooks/internal",
+      headers: { "content-type": "application/json", "x-lb-signature": signPayload(junk, secret) },
+      payload: junk,
+    });
+    expect(junkOk.statusCode).toBe(400);
     await app.close();
   });
 });

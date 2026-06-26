@@ -20,7 +20,7 @@ export class NoTokensError extends Error {}
 // Note: a production multi-worker deployment should guard the refresh with a
 // Postgres advisory lock so two workers don't refresh concurrently. The neon-http
 // driver can't hold a session lock across statements, so that lands with the
-// transactional pool the worker uses (M4); for the single dev process this is fine.
+// transactional pool a long-running worker uses; for the single dev process this is fine.
 export async function getValidAccessToken(
   db: Database,
   cfg: QboConfig,

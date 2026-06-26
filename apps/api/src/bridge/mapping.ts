@@ -27,7 +27,8 @@ export function mapInvoiceToQbo(
 }
 
 // A stable fingerprint of the internal invoice's synced fields. Stored on the link
-// as last_synced_hash; M5 compares an incoming hash to this to drop our own echo.
+// as last_synced_hash; the reverse direction compares an incoming hash to this to
+// drop our own echo.
 export function hashInvoice(inv: InternalInvoice): string {
   const canonical = JSON.stringify({
     id: inv.id,

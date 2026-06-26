@@ -41,7 +41,7 @@ export function createWebhookSink(opts: {
   };
 }
 
-// Used until the bridge ingest endpoint (M4) is wired up.
+// No-op sink — for tests, or when no webhook target is configured.
 export const noopSink: ChangeSink = {
   async emit() {},
 };

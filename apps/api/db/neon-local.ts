@@ -5,8 +5,8 @@ import { neonConfig } from '@neondatabase/serverless';
 // on :4444 instead when the connection targets it. Real Neon hosts never match
 // `localtest.me` and NEON_LOCAL is unset in production, so this is a no-op there.
 //
-// Shared by the app client (db/index.ts) and the seed script (db/seed.ts), which
-// each construct their own neon-http client.
+// Shared by the app client (db/index.ts) and the migrate/test paths, which each
+// construct their own neon-http client.
 export function configureNeonForLocalProxy(connectionString: string): void {
   if (connectionString.includes('localtest.me') || process.env.NEON_LOCAL) {
     neonConfig.fetchEndpoint = (host) => `http://${host}:4444/sql`;

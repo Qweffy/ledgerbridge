@@ -23,7 +23,8 @@ export async function processEvent(
   event: SyncEventRow,
   deps: ProcessorDeps,
 ): Promise<void> {
-  if (event.source !== "internal" || event.entityType !== "invoice") return; // payments / qbo-source: M5/M6
+  // only internal-sourced invoices sync in this direction
+  if (event.source !== "internal" || event.entityType !== "invoice") return;
 
   const now = deps.now?.() ?? new Date();
   const internalId = event.entityExternalId;
@@ -41,6 +42,17 @@ export async function processEvent(
 
   const link = await getLinkByInternalId(db, "invoice", internalId);
   const hash = hashInvoice(invoice);
+
+  // Nothing changed since we last synced this entity: a re-delivery (or, in the
+  // QBO→internal direction, our own echo). Skip — no redundant write, no re-void.
+  if (link && link.lastSyncedHash === hash && link.status === "linked") {
+    await writeAudit(
+      db,
+      { eventId: event.eventId, entityType: "invoice", entityExternalId: internalId, action: "skip", result: "ok", error: "unchanged since last sync", correlationId },
+      now,
+    );
+    return;
+  }
 
   // delete → void (accounting voids, never hard-deletes)
   if (invoice.status === "deleted") {
