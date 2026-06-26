@@ -43,10 +43,14 @@ function verifyState(state: string, secret: string): boolean {
 //                     state, exchange the code for tokens, and store them.
 export function registerOAuthRoutes(app: FastifyInstance, deps: OAuthRouteDeps): void {
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const secret = deps.cfg.clientSecret;
+  // Domain-separated signing key for the CSRF state, derived from the client
+  // secret so the raw credential isn't reused directly across trust boundaries.
+  const stateKey = createHmac("sha256", deps.cfg.clientSecret)
+    .update("ledgerbridge:oauth-state")
+    .digest("hex");
 
   app.get("/oauth/connect", async (_req, reply) => {
-    return reply.redirect(buildAuthorizeUrl(deps.cfg, signState(secret)));
+    return reply.redirect(buildAuthorizeUrl(deps.cfg, signState(stateKey)));
   });
 
   app.get("/oauth/callback", async (req, reply) => {
@@ -60,7 +64,7 @@ export function registerOAuthRoutes(app: FastifyInstance, deps: OAuthRouteDeps):
     if (!query.code || !query.state || !query.realmId) {
       return reply.code(400).send({ error: "missing code, state or realmId" });
     }
-    if (!verifyState(query.state, secret)) {
+    if (!verifyState(query.state, stateKey)) {
       return reply.code(400).send({ error: "invalid or expired state" });
     }
 

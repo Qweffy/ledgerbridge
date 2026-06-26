@@ -121,3 +121,16 @@ The API suite runs against an in-process Postgres (PGlite) with the real migrati
 exercises the production schema — including the idempotency and outbox logic — without Docker or a
 remote database. The most important edge cases (duplicate webhook, timeout-after-write "money shot",
 retry/dead-letter, delete→void) are covered.
+
+## Security
+
+- Secrets (the database URL, QBO keys) live only in `apps/api/.env.local`, which is gitignored;
+  the repo ships empty `.env.example` placeholders.
+- The internal→bridge webhook is authenticated with an HMAC-SHA256 signature compared in constant
+  time (an invalid signature is a `401`). The OAuth callback validates a signed, expiring `state`
+  to defend against CSRF, keyed by a value domain-separated from the client secret.
+- Inbound ids are constrained at the boundary (Zod) before being used as a QBO `DocNumber` in a
+  query.
+- Production hardening, deliberately out of scope for one connected sandbox: per-sender webhook
+  keys with a key id and rotation, and a dedicated OAuth state secret rather than one derived from
+  the client secret.
