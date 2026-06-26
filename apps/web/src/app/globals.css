@@ -231,11 +231,100 @@
   --popover-foreground:    var(--foreground);
   --secondary:             var(--popover);
   --secondary-foreground:  var(--foreground);
-  --accent:                var(--muted);
   --accent-foreground:     var(--foreground);
   --destructive:           var(--status-dead-solid);
   --destructive-foreground: var(--primary-foreground);
   --radius:                var(--radius-md);
+}
+
+/* ------------------------------------------------------------------ */
+/* 2c. Dashboard compatibility aliases                                 */
+/*     The dashboard screens (ported from the bundle) reference the     */
+/*     design-system semantic token names. Alias them onto the          */
+/*     production tokens — same OKLCH palette, one source of truth.      */
+/* ------------------------------------------------------------------ */
+:root {
+  /* raw neutral ramp (scrollbar, hairlines) */
+  --gray-0: var(--color-neutral-0);     --gray-50: var(--color-neutral-50);
+  --gray-100: var(--color-neutral-100); --gray-200: var(--color-neutral-200);
+  --gray-300: var(--color-neutral-300); --gray-400: var(--color-neutral-400);
+  --gray-500: var(--color-neutral-500); --gray-600: var(--color-neutral-600);
+  --gray-700: var(--color-neutral-700); --gray-800: var(--color-neutral-800);
+  --gray-850: var(--color-neutral-850); --gray-900: var(--color-neutral-900);
+  --gray-950: var(--color-neutral-950); --gray-975: var(--color-neutral-975);
+  --gray-1000: var(--color-neutral-1000);
+
+  /* surfaces (panel/sunken/hover/active already share these names) */
+  --surface-canvas: var(--background);
+  --surface-card:   var(--card);
+  --surface-raised: var(--popover);
+
+  /* text */
+  --text-strong:    var(--foreground);
+  --text-primary:   var(--color-neutral-100);
+  --text-secondary: var(--foreground-secondary);
+  --text-muted:     var(--muted-foreground);
+  --text-faint:     var(--faint-foreground);
+  --text-onAccent:  var(--color-neutral-0);
+  --text-link:      var(--color-primary-400);
+
+  /* borders */
+  --border-subtle:  var(--border);
+  --border-default: var(--input);
+  --border-focus:   var(--color-primary-500);
+
+  /* brand accent (blue) */
+  --accent:       var(--primary);
+  --accent-hover: var(--primary-hover);
+  --accent-press: var(--primary-active);
+  --accent-fg:    var(--primary-foreground);
+  --blue-tint:    oklch(0.625 0.175 255 / 0.14);
+  --blue-tint-hi: oklch(0.625 0.175 255 / 0.24);
+  --accent-tint:  var(--blue-tint);
+
+  /* status — bundle uses *-fill for the soft tint, *-solid for the dot */
+  --status-synced-fg: var(--color-emerald-400);  --status-synced-fill: var(--status-done-bg);     --status-synced-solid: var(--color-emerald-500);
+  --status-inflight-fg: var(--color-sky-400);    --status-inflight-fill: var(--status-pending-bg); --status-inflight-solid: var(--color-sky-500);
+  --status-conflict-fill: var(--status-conflict-bg);
+  --status-failed-fg: var(--color-rose-400);     --status-failed-fill: var(--status-dead-bg);      --status-failed-solid: var(--color-rose-500);
+  --status-replayed-fg: var(--color-violet-400); --status-replayed-fill: oklch(0.660 0.180 295 / 0.15); --status-replayed-solid: var(--color-violet-500);
+  --status-idle-fg: var(--color-neutral-400);    --status-idle-fill: oklch(1 0 0 / 0.06);          --status-idle-solid: var(--color-neutral-500);
+
+  --ring-inset-top: var(--inset-top);
+  --focus-ring: 0 0 0 2px var(--surface-canvas), 0 0 0 4px var(--ring);
+
+  /* font weights + roles */
+  --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600; --fw-bold: 700;
+  --font-display: var(--fw-semibold) var(--text-5xl)/var(--leading-tight) var(--font-sans);
+  --font-h1: var(--fw-semibold) var(--text-2xl)/var(--leading-tight) var(--font-sans);
+  --font-h2: var(--fw-semibold) var(--text-xl)/var(--leading-snug) var(--font-sans);
+  --font-body: var(--fw-regular) var(--text-base)/var(--leading-normal) var(--font-sans);
+  --font-ui: var(--fw-medium) var(--text-sm)/var(--leading-snug) var(--font-sans);
+  --font-label: var(--fw-medium) var(--text-xs)/var(--leading-snug) var(--font-sans);
+  --font-data: var(--fw-regular) var(--text-sm)/var(--leading-snug) var(--font-mono);
+
+  /* spacing scale (4px grid) */
+  --space-0: 0; --space-px: 1px; --space-1: 4px; --space-2: 8px; --space-3: 12px;
+  --space-4: 16px; --space-5: 20px; --space-6: 24px; --space-7: 32px; --space-8: 40px;
+  --space-9: 48px; --space-10: 64px; --space-11: 80px; --space-12: 96px; --space-13: 128px; --space-14: 160px;
+
+  /* control heights + layout rails */
+  --control-xs: 24px; --control-sm: 28px; --control-md: 32px; --control-lg: 38px; --control-xl: 44px;
+  --sidebar-w: 232px; --topbar-h: 52px; --content-max: 1200px; --landing-max: 1120px; --gutter: var(--space-6);
+
+  /* motion durations */
+  --dur-instant: 80ms; --dur-fast: 140ms; --dur-normal: 220ms; --dur-slow: 360ms;
+  --border-w: 1px; --border-w-2: 1.5px;
+}
+
+.light {
+  --text-primary:       oklch(0.290 0.013 265);
+  --text-link:          var(--color-primary-600);
+  --status-synced-fg:   var(--color-emerald-600);
+  --status-inflight-fg: var(--color-sky-600);
+  --status-failed-fg:   var(--color-rose-600);
+  --status-replayed-fg: var(--color-violet-600);
+  --status-idle-fg:     oklch(0.530 0.013 265);
 }
 
 /* ------------------------------------------------------------------ */
@@ -412,6 +501,37 @@
   70%  { transform: scale(2.6); opacity: 0; }
   100% { transform: scale(2.6); opacity: 0; }
 }
+/* overview/connection live-dot ripples (same shape, different scale targets) */
+@keyframes lb-pulse2 {
+  0%        { transform: scale(1);   opacity: 0.7; }
+  70%, 100% { transform: scale(2.6); opacity: 0; }
+}
+@keyframes lb-cs {
+  0%        { transform: scale(1);   opacity: 0.7; }
+  70%, 100% { transform: scale(2.4); opacity: 0; }
+}
 @keyframes lb-spin {
   to { transform: rotate(360deg); }
+}
+@keyframes lb-shimmer { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@keyframes lb-toast { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes lb-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* ------------------------------------------------------------------ */
+/* 6. Dashboard chrome: full-height app + custom scrollbar             */
+/* ------------------------------------------------------------------ */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: var(--gray-700);
+  border-radius: 999px;
+  border: 3px solid var(--surface-canvas);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--gray-600); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
