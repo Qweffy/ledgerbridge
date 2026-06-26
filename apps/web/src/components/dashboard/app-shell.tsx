@@ -9,6 +9,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { api } from "@/lib/api/client";
 import { useApi } from "@/lib/api/hooks";
 import { Icon } from "./icon";
+import { ToastHost } from "./overlays";
 
 interface NavEntry {
   id: string;
@@ -224,6 +225,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <TopBar crumbs={crumbs} />
         <main style={{ flex: 1, minHeight: 0, overflow: "auto" }}>{children}</main>
       </div>
+      <ToastHost />
     </div>
   );
 }
