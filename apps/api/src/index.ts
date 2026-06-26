@@ -8,8 +8,8 @@ const { db } = await import("../db");
 const { buildServer } = await import("./server");
 const { loadQboConfig } = await import("./config");
 const { createWebhookSink, noopSink } = await import("./internal/sink");
-const { getInvoice, updateInvoice, deleteInvoice } = await import("./internal/service");
-const { createQboInvoiceOps } = await import("./bridge/qbo-ops");
+const { getInvoice, getPayment, updateInvoice, deleteInvoice } = await import("./internal/service");
+const { createQboInvoiceOps, createQboPaymentOps } = await import("./bridge/qbo-ops");
 const { startWorker } = await import("./bridge/worker");
 
 const PORT = Number(process.env.PORT ?? 3001);
@@ -48,6 +48,7 @@ const itemRef = process.env.QBO_DEFAULT_ITEM;
 let worker: { stop: () => Promise<void> } | undefined;
 if (qbo && realmId && customerRef && itemRef) {
   const ops = createQboInvoiceOps({ db, cfg: qbo.cfg, realmId });
+  const paymentOps = createQboPaymentOps({ db, cfg: qbo.cfg, realmId });
   worker = startWorker(db, {
     processor: {
       refetchInternalInvoice: (id) => getInvoice(db, id),
@@ -58,6 +59,12 @@ if (qbo && realmId && customerRef && itemRef) {
       applyToInternal: {
         updateAmount: (id, amountCents) => updateInvoice(db, sink, id, { amountCents }),
         remove: (id) => deleteInvoice(db, sink, id),
+      },
+      // Payment sync: internal payment → QBO Payment linked to the invoice.
+      payments: {
+        refetchPayment: (id) => getPayment(db, id),
+        qboPayments: paymentOps,
+        defaults: { customerRef },
       },
     },
     pollIntervalMs: 1000,

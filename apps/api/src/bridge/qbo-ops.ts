@@ -1,5 +1,6 @@
 import {
   createInvoice,
+  createPayment,
   getInvoice,
   qboQuery,
   updateInvoice,
@@ -31,6 +32,13 @@ export interface QboInvoiceOps {
   voidInvoice(id: string, syncToken: string): Promise<QboRef>;
 }
 
+// The payment operations the payment processor needs. A QBO Payment has no
+// DocNumber, so there's no check-by-external-id; idempotency comes from a payment
+// link row (our DB) plus the Request-Id header (Intuit's API-level dedup).
+export interface QboPaymentOps {
+  create(payment: Record<string, unknown>, requestId: string): Promise<QboRef>;
+}
+
 interface QboInvoiceBody extends QboRef {
   DocNumber?: string;
   TotalAmt?: number;
@@ -38,6 +46,9 @@ interface QboInvoiceBody extends QboRef {
 }
 interface InvoiceEnvelope {
   Invoice: QboInvoiceBody;
+}
+interface PaymentEnvelope {
+  Payment: QboRef;
 }
 interface QueryEnvelope {
   QueryResponse: { Invoice?: QboRef[] };
@@ -85,6 +96,15 @@ export function createQboInvoiceOps(deps: QboClientDeps): QboInvoiceOps {
     async voidInvoice(id, syncToken) {
       const res = (await voidInvoice(deps, id, syncToken)) as InvoiceEnvelope;
       return res.Invoice;
+    },
+  };
+}
+
+export function createQboPaymentOps(deps: QboClientDeps): QboPaymentOps {
+  return {
+    async create(payment, requestId) {
+      const res = (await createPayment(deps, payment, requestId)) as PaymentEnvelope;
+      return res.Payment;
     },
   };
 }

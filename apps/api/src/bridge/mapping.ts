@@ -39,3 +39,34 @@ export function hashInvoice(inv: InternalInvoice): string {
   });
   return createHash("sha256").update(canonical).digest("hex");
 }
+
+export interface QboPaymentDefaults {
+  customerRef: string;
+}
+
+// Map an internal payment to a QBO Payment body. The LinkedTxn ties it to the QBO
+// invoice, which is what makes QBO reduce that invoice's Balance. PrivateNote carries
+// our internal payment id for traceability. Money is dollars on the QBO side.
+export function mapPaymentToQbo(
+  pay: { id: string; amountCents: number },
+  invoiceQboId: string,
+  defaults: QboPaymentDefaults,
+): Record<string, unknown> {
+  return {
+    TotalAmt: pay.amountCents / 100,
+    CustomerRef: { value: defaults.customerRef },
+    PrivateNote: `internal:${pay.id}`,
+    Line: [
+      {
+        Amount: pay.amountCents / 100,
+        LinkedTxn: [{ TxnId: invoiceQboId, TxnType: "Invoice" }],
+      },
+    ],
+  };
+}
+
+// Fingerprint of a payment's synced fields, stored on its link.
+export function hashPayment(pay: { id: string; invoiceId: string; amountCents: number }): string {
+  const canonical = JSON.stringify({ id: pay.id, invoiceId: pay.invoiceId, amountCents: pay.amountCents });
+  return createHash("sha256").update(canonical).digest("hex");
+}

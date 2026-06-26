@@ -60,6 +60,27 @@ export function getInvoice(deps: QboClientDeps, id: string): Promise<unknown> {
   return qboRequest(deps, "GET", `/invoice/${id}`);
 }
 
+// A QBO Payment carries a LinkedTxn to the invoice it pays. requestId → Request-Id,
+// so a retried create after a lost response is deduped by Intuit (Payments have no
+// DocNumber, so this header is the API-level idempotency key).
+export function createPayment(
+  deps: QboClientDeps,
+  payment: unknown,
+  requestId?: string,
+): Promise<unknown> {
+  return qboRequest(
+    deps,
+    "POST",
+    "/payment",
+    payment,
+    requestId ? { "Request-Id": requestId } : undefined,
+  );
+}
+
+export function getPayment(deps: QboClientDeps, id: string): Promise<unknown> {
+  return qboRequest(deps, "GET", `/payment/${id}`);
+}
+
 // Sparse update — `invoice` must carry Id + SyncToken; only the supplied fields change.
 export function updateInvoice(deps: QboClientDeps, invoice: Record<string, unknown>): Promise<unknown> {
   return qboRequest(deps, "POST", "/invoice", { ...invoice, sparse: true });

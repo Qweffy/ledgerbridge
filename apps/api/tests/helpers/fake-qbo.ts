@@ -1,4 +1,4 @@
-import type { QboInvoiceOps } from "../../src/bridge/qbo-ops";
+import type { QboInvoiceOps, QboPaymentOps } from "../../src/bridge/qbo-ops";
 
 // Reach into a QBO invoice body's first line amount (dollars) → integer cents.
 export function bodyCents(invoice: Record<string, unknown>): number {
@@ -68,8 +68,31 @@ export function createFakeQbo() {
     },
   };
 
+  const paymentsById = new Map<string, Record<string, unknown>>();
+  const paymentByReqId = new Map<string, string>();
+  let paymentSeq = 500;
+  let paymentCreateCalls = 0;
+  let lastPaymentBody: Record<string, unknown> | undefined;
+
+  const payments: QboPaymentOps = {
+    async create(payment, requestId) {
+      // Mirror Intuit's Request-Id dedup: a retry with the same id returns the
+      // original payment instead of inserting a duplicate.
+      const seen = paymentByReqId.get(requestId);
+      if (seen) return { Id: seen, SyncToken: "0" };
+      paymentCreateCalls += 1;
+      lastPaymentBody = payment;
+      const id = String((paymentSeq += 1));
+      paymentsById.set(id, payment);
+      paymentByReqId.set(requestId, id);
+      return { Id: id, SyncToken: "0" };
+    },
+  };
+
   return {
     ops,
+    payments,
+    paymentsById,
     byId,
     byDoc,
     seed(docNumber: string): string {
@@ -101,6 +124,12 @@ export function createFakeQbo() {
     },
     get lastVoidSyncToken() {
       return lastVoidSyncToken;
+    },
+    get paymentCreateCalls() {
+      return paymentCreateCalls;
+    },
+    get lastPaymentBody() {
+      return lastPaymentBody;
     },
   };
 }

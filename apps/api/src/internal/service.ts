@@ -95,6 +95,18 @@ export async function getInvoice(
   return inv;
 }
 
+export async function getPayment(
+  db: Database,
+  id: string,
+): Promise<InternalPayment | undefined> {
+  const [payment] = await db
+    .select()
+    .from(internalPayments)
+    .where(eq(internalPayments.id, id))
+    .limit(1);
+  return payment;
+}
+
 export async function createInvoice(
   db: Database,
   sink: ChangeSink,
@@ -188,12 +200,14 @@ export async function recordPayment(
     .where(eq(internalInvoices.id, invoiceId))
     .returning();
   if (!inv) throw new Error("failed to update invoice balance");
+  // A payment is its own entity: it syncs to a QBO Payment (which reduces the QBO
+  // invoice's balance), so it's emitted as a payment change, not an invoice update.
   await emitChange(db, sink, {
-    entity: "invoice",
-    entityId: inv.id,
+    entity: "payment",
+    entityId: payment.id,
     changeType: "pay",
-    version: inv.version,
-    snapshot: snapshotOf(inv),
+    version: 1,
+    snapshot: { id: payment.id, invoiceId, amountCents, balanceCents: inv.balanceCents },
   });
   return { invoice: inv, payment };
 }

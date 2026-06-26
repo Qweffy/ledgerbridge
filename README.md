@@ -40,6 +40,10 @@ Built and tested so far:
   operator resolves it (`resolveConflict`); disjoint-field edits apply independently and identical
   edits converge. Flag-and-hold rather than cross-clock last-write-wins, so a real change is never
   silently dropped (see DESIGN.md).
+- **Payments** — an internal payment syncs as a real QBO **`Payment`** with a `LinkedTxn` to the
+  invoice (so QBO's invoice Balance reflects it). Idempotent two ways: a `payment` link row
+  (skip if already synced) and a stable `Request-Id` (Intuit dedups a retried create — Payments have
+  no `DocNumber`). The reverse (a payment entered in QBO → internal) is deliberately deferred.
 
 Verified end-to-end against a real QBO sandbox (an internal invoice propagates to a QBO invoice;
 re-delivered webhooks are dropped). The reverse direction's logic — including the no-loop round trip —

@@ -7,6 +7,7 @@ import { getLinkByInternalId, markLinkConflict, upsertLink } from "./links";
 import { hashInvoice, mapInvoiceToQbo, type QboInvoiceDefaults } from "./mapping";
 import type { QboInvoiceOps, QboInvoiceState } from "./qbo-ops";
 import { processQboToInternal, type InternalApply } from "./reverse";
+import { processPaymentToQbo, type PaymentProcessorDeps } from "./payments";
 
 export type SyncEventRow = typeof syncEvents.$inferSelect;
 
@@ -18,31 +19,42 @@ export interface ProcessorDeps {
   // The reverse direction (QBO → internal). Optional: when unset, QBO-sourced
   // events are not applied (one-direction deployments).
   applyToInternal?: InternalApply;
+  // Payment sync (internal payment → QBO Payment). Optional.
+  payments?: PaymentProcessorDeps;
   now?: () => Date;
 }
 
-// Route an event to the right direction by its source. Both directions are
-// idempotent and audited; loop prevention is split across the two (version on the
-// QBO side, hash on the internal side), and conflict detection is shared (conflict.ts).
+// Route an event by entity type and source. Each path is idempotent and audited;
+// loop prevention is split across the directions (version on the QBO side, hash on
+// the internal side), and conflict detection is shared (conflict.ts).
 export async function processEvent(
   db: Database,
   event: SyncEventRow,
   deps: ProcessorDeps,
 ): Promise<void> {
-  if (event.entityType !== "invoice") return;
   const now = deps.now?.() ?? new Date();
 
-  if (event.source === "internal") {
-    return processInternalToQbo(db, event, deps, now);
+  if (event.entityType === "invoice") {
+    if (event.source === "internal") {
+      return processInternalToQbo(db, event, deps, now);
+    }
+    if (event.source === "quickbooks") {
+      if (!deps.applyToInternal) return;
+      return processQboToInternal(
+        db,
+        event,
+        { qbo: deps.qbo, internal: deps.applyToInternal, refetchInternal: deps.refetchInternalInvoice },
+        now,
+      );
+    }
+    return;
   }
-  if (event.source === "quickbooks") {
-    if (!deps.applyToInternal) return;
-    return processQboToInternal(
-      db,
-      event,
-      { qbo: deps.qbo, internal: deps.applyToInternal, refetchInternal: deps.refetchInternalInvoice },
-      now,
-    );
+
+  if (event.entityType === "payment") {
+    // Only internal → QBO payments for now; QBO Payment → internal is deferred.
+    if (event.source === "internal" && deps.payments) {
+      return processPaymentToQbo(db, event, deps.payments, now);
+    }
   }
 }
 

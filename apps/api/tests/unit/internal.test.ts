@@ -47,10 +47,14 @@ describe("internal system — change feed + signed webhooks", () => {
     expect(deleted.status).toBe("deleted");
     expect(deleted.deletedAt).not.toBeNull();
 
-    // one signed event per change, monotonic versions, stable unique ids
+    // one signed event per change, stable unique ids. The payment is its own entity
+    // (it syncs to a QBO Payment), so the "pay" change targets the payment, not the invoice.
     expect(events.map((e) => e.changeType)).toEqual(["create", "update", "pay", "delete"]);
-    expect(events.map((e) => e.version)).toEqual([1, 2, 3, 4]);
-    expect(events.every((e) => e.entity === "invoice" && e.entityId === inv.id)).toBe(true);
+    expect(events.map((e) => e.entity)).toEqual(["invoice", "invoice", "payment", "invoice"]);
+    expect(events[2]?.entityId).toMatch(/^PAY-/);
+    expect([events[0], events[1], events[3]].every((e) => e?.entityId === inv.id)).toBe(true);
+    // the invoice's own versions stay monotonic across create → update → delete
+    expect([events[0]?.version, events[1]?.version, events[3]?.version]).toEqual([1, 2, 4]);
     expect(new Set(events.map((e) => e.eventId)).size).toBe(4);
 
     // refetch returns current state (the bridge never trusts the payload)
