@@ -86,9 +86,14 @@ cp apps/api/.env.example apps/api/.env.local
 | `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` | Intuit app Development keys. |
 | `QBO_REDIRECT_URI` | Must match a Redirect URI registered on the app (e.g. `http://localhost:3001/oauth/callback`). |
 | `QBO_ENVIRONMENT` | `sandbox` or `production`. |
-| `QBO_REALM_ID` | The connected sandbox company id. |
+| `QBO_REALM_ID` | The connected sandbox company id (from the OAuth callback). |
+| `QBO_DEFAULT_CUSTOMER` / `QBO_DEFAULT_ITEM` | The QBO Customer + Item the bridge maps internal invoices onto. |
 | `INTERNAL_WEBHOOK_SECRET` | HMAC key the simulated internal system signs its webhooks with. |
 | `INTERNAL_WEBHOOK_TARGET` | Where the internal system posts change webhooks (the bridge ingest). |
+| `PORT` | API port (default `3001`). |
+
+> The sync worker only starts when `QBO_REALM_ID`, `QBO_DEFAULT_CUSTOMER` and `QBO_DEFAULT_ITEM` are
+> set (otherwise the API runs without it and logs a warning).
 
 Apply the migrations, then run:
 
