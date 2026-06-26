@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import type { EntityType, LinkStatus } from "@ledgerbridge/shared";
 import { links } from "../../db/schema";
 import type { Database } from "../../db/types";
+import type { InvoiceCanonical } from "./conflict";
 
 export type LinkRow = typeof links.$inferSelect;
 
@@ -33,6 +34,22 @@ export async function getLinkByQboId(
   return row;
 }
 
+// Conflict resolution addresses a link by its surrogate id.
+export async function getLinkById(db: Database, id: number): Promise<LinkRow | undefined> {
+  const [row] = await db.select().from(links).where(eq(links.id, id)).limit(1);
+  return row;
+}
+
+// Flag a link as conflicted without touching its last-synced basis (snapshot /
+// versions / hash), so re-evaluation while it's held compares against the same point.
+export async function markLinkConflict(
+  db: Database,
+  id: number,
+  now: Date = new Date(),
+): Promise<void> {
+  await db.update(links).set({ status: "conflict", updatedAt: now }).where(eq(links.id, id));
+}
+
 export interface UpsertLinkInput {
   entityType: EntityType;
   internalId: string;
@@ -42,6 +59,9 @@ export interface UpsertLinkInput {
   // The QBO SyncToken we last wrote or observed. Echo detection compares an
   // incoming change's version to this to drop our own write-back.
   lastQboVersion?: number;
+  // Canonical comparable state ({amountCents, status}) at this sync — the basis the
+  // next event's conflict check diffs against.
+  lastSyncedSnapshot?: InvoiceCanonical;
   status: LinkStatus;
 }
 
@@ -53,6 +73,8 @@ export async function upsertLink(
 ): Promise<void> {
   const qboVersion =
     input.lastQboVersion !== undefined ? { lastQboVersion: input.lastQboVersion } : {};
+  const snapshot =
+    input.lastSyncedSnapshot !== undefined ? { lastSyncedSnapshot: input.lastSyncedSnapshot } : {};
   const existing = await getLinkByInternalId(db, input.entityType, input.internalId);
   if (existing) {
     await db
@@ -62,6 +84,7 @@ export async function upsertLink(
         lastSyncedHash: input.lastSyncedHash,
         lastInternalVersion: input.lastInternalVersion,
         ...qboVersion,
+        ...snapshot,
         status: input.status,
         updatedAt: now,
       })
@@ -75,6 +98,7 @@ export async function upsertLink(
     lastSyncedHash: input.lastSyncedHash,
     lastInternalVersion: input.lastInternalVersion,
     ...qboVersion,
+    ...snapshot,
     status: input.status,
     createdAt: now,
     updatedAt: now,

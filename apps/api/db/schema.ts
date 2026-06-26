@@ -46,6 +46,12 @@ export const links = pgTable(
     lastSyncedHash: text("last_synced_hash"),
     lastInternalVersion: integer("last_internal_version"),
     lastQboVersion: integer("last_qbo_version"),
+    // canonical comparable state at last sync ({amountCents, status}); the basis for
+    // both-changed conflict detection. Null on links created before M6 (no prior basis).
+    lastSyncedSnapshot: jsonb("last_synced_snapshot").$type<{
+      amountCents: number;
+      status: "open" | "deleted";
+    }>(),
     status: linkStatus("status").notNull().default("linked"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

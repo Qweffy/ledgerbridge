@@ -34,6 +34,12 @@ Built and tested so far:
   from ping-ponging: our own write-back is recognised by the QBO **`SyncToken`** we recorded, and the
   internal-side echo it triggers is recognised by the state **hash** — so a change made in one system
   lands in the other exactly once.
+- **Conflict handling (edited in both)** — each link keeps the **last-synced snapshot**; before
+  applying, both sides are diffed against it. A **same-field divergence** (both moved the amount,
+  differently) flags `status='conflict'` and **holds both directions** — no clobber — until an
+  operator resolves it (`resolveConflict`); disjoint-field edits apply independently and identical
+  edits converge. Flag-and-hold rather than cross-clock last-write-wins, so a real change is never
+  silently dropped (see DESIGN.md).
 
 Verified end-to-end against a real QBO sandbox (an internal invoice propagates to a QBO invoice;
 re-delivered webhooks are dropped). The reverse direction's logic — including the no-loop round trip —

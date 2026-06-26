@@ -15,6 +15,13 @@
       "when": 1782490928867,
       "tag": "0001_charming_trish_tilby",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782504091938,
+      "tag": "0002_loving_the_initiative",
+      "breakpoints": true
     }
   ]
 }

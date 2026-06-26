@@ -2,9 +2,10 @@ import { syncEvents } from "../../db/schema";
 import type { Database } from "../../db/types";
 import type { InternalInvoice } from "../internal/service";
 import { writeAudit } from "./audit";
-import { getLinkByInternalId, upsertLink } from "./links";
+import { actionFor, analyze, canonicalFromInternal, canonicalFromQbo } from "./conflict";
+import { getLinkByInternalId, markLinkConflict, upsertLink } from "./links";
 import { hashInvoice, mapInvoiceToQbo, type QboInvoiceDefaults } from "./mapping";
-import type { QboInvoiceOps } from "./qbo-ops";
+import type { QboInvoiceOps, QboInvoiceState } from "./qbo-ops";
 import { processQboToInternal, type InternalApply } from "./reverse";
 
 export type SyncEventRow = typeof syncEvents.$inferSelect;
@@ -22,7 +23,7 @@ export interface ProcessorDeps {
 
 // Route an event to the right direction by its source. Both directions are
 // idempotent and audited; loop prevention is split across the two (version on the
-// QBO side, hash on the internal side).
+// QBO side, hash on the internal side), and conflict detection is shared (conflict.ts).
 export async function processEvent(
   db: Database,
   event: SyncEventRow,
@@ -36,12 +37,18 @@ export async function processEvent(
   }
   if (event.source === "quickbooks") {
     if (!deps.applyToInternal) return;
-    return processQboToInternal(db, event, { qbo: deps.qbo, internal: deps.applyToInternal }, now);
+    return processQboToInternal(
+      db,
+      event,
+      { qbo: deps.qbo, internal: deps.applyToInternal, refetchInternal: deps.refetchInternalInvoice },
+      now,
+    );
   }
 }
 
-// Apply one internal-invoice event to QBO, idempotently. The two load-bearing
-// rules: refetch current state, and check-before-create by external id.
+// Apply one internal-invoice event to QBO, idempotently. Gate order matters: echo
+// skip and the terminal delete→void run before conflict detection so our own echo
+// never false-positives as a conflict and a delete always wins.
 async function processInternalToQbo(
   db: Database,
   event: SyncEventRow,
@@ -50,61 +57,88 @@ async function processInternalToQbo(
 ): Promise<void> {
   const internalId = event.entityExternalId;
   const correlationId = event.correlationId ?? undefined;
+  const base = { eventId: event.eventId, entityType: "invoice" as const, entityExternalId: internalId, correlationId };
 
   const invoice = await deps.refetchInternalInvoice(internalId);
   if (!invoice) {
-    await writeAudit(
-      db,
-      { eventId: event.eventId, entityType: "invoice", entityExternalId: internalId, action: "skip", result: "ok", error: "internal invoice not found", correlationId },
-      now,
-    );
+    await writeAudit(db, { ...base, action: "skip", result: "ok", error: "internal invoice not found" }, now);
     return;
   }
 
   const link = await getLinkByInternalId(db, "invoice", internalId);
   const hash = hashInvoice(invoice);
 
-  // Nothing changed since we last synced this entity: a re-delivery, or the echo of
-  // a write the reverse direction just made into the internal system. Skip — no
-  // redundant write, no re-void. This is the internal-side half of loop prevention.
-  if (link && link.lastSyncedHash === hash && link.status === "linked") {
-    await writeAudit(
-      db,
-      { eventId: event.eventId, entityType: "invoice", entityExternalId: internalId, action: "skip", result: "ok", error: "unchanged since last sync", correlationId },
-      now,
-    );
+  // Echo / re-delivery on a healthy link: unchanged since our last sync. Cheapest
+  // gate, and it runs before any QBO read so echoes cost nothing.
+  if (link && link.status === "linked" && link.lastSyncedHash === hash) {
+    await writeAudit(db, { ...base, action: "skip", result: "ok", error: "unchanged since last sync" }, now);
     return;
   }
 
-  // delete → void (accounting voids, never hard-deletes)
+  // Terminal: internal delete → QBO void. Delete wins over a concurrent edit (it's
+  // terminal and safe), so it precedes conflict detection and clears any hold.
   if (invoice.status === "deleted") {
     if (link?.qboId) {
       const ref = await deps.qbo.read(link.qboId);
       const voided = await deps.qbo.voidInvoice(ref.Id, ref.SyncToken);
-      await upsertLink(db, { entityType: "invoice", internalId, qboId: link.qboId, lastSyncedHash: hash, lastInternalVersion: invoice.version, lastQboVersion: Number(voided.SyncToken), status: "linked" }, now);
-      await writeAudit(
-        db,
-        { eventId: event.eventId, entityType: "invoice", entityExternalId: internalId, action: "void", before: { qboId: link.qboId }, after: { qboId: link.qboId, voided: true }, result: "ok", correlationId },
-        now,
-      );
+      await upsertLink(db, { entityType: "invoice", internalId, qboId: link.qboId, lastSyncedHash: hash, lastInternalVersion: invoice.version, lastQboVersion: Number(voided.SyncToken), lastSyncedSnapshot: canonicalFromInternal(invoice), status: "linked" }, now);
+      await writeAudit(db, { ...base, action: "void", before: { qboId: link.qboId }, after: { qboId: link.qboId, voided: true }, result: "ok" }, now);
     } else {
-      await writeAudit(
-        db,
-        { eventId: event.eventId, entityType: "invoice", entityExternalId: internalId, action: "skip", result: "ok", error: "no linked QBO invoice to void", correlationId },
-        now,
-      );
+      await writeAudit(db, { ...base, action: "skip", result: "ok", error: "no linked QBO invoice to void" }, now);
     }
     return;
   }
 
+  // A real internal change with a mapping: refetch QBO and decide against the snapshot
+  // taken at the last sync — clean apply, both-changed conflict, no-op for QBO, or a
+  // convergence.
+  const qboState: QboInvoiceState | undefined = link?.qboId ? await deps.qbo.read(link.qboId) : undefined;
+  if (link && qboState) {
+    const snapshot = link.lastSyncedSnapshot ?? null;
+    const analysis = analyze(snapshot, canonicalFromInternal(invoice), canonicalFromQbo(qboState));
+
+    // Held conflict: only a convergence (both sides now agree) clears it
+    // automatically; otherwise hold until an operator resolves. A new single-side
+    // edit must NOT auto-apply — it could clobber the other side's flagged change.
+    if (link.status === "conflict") {
+      if (analysis.outcome === "converged" || analysis.outcome === "neither") {
+        await upsertLink(db, { entityType: "invoice", internalId, qboId: qboState.Id, lastSyncedHash: hash, lastInternalVersion: invoice.version, lastQboVersion: Number(qboState.SyncToken), lastSyncedSnapshot: canonicalFromInternal(invoice), status: "linked" }, now);
+        await writeAudit(db, { ...base, action: "skip", result: "ok", error: "conflict cleared (sides converged)" }, now);
+      } else {
+        await writeAudit(db, { ...base, action: "skip", result: "ok", error: "held: link in conflict; awaiting resolution" }, now);
+      }
+      return;
+    }
+
+    const action = actionFor("internal", analysis);
+    if (action === "conflict") {
+      await markLinkConflict(db, link.id, now);
+      await writeAudit(db, { ...base, action: "conflict", before: { amountCents: snapshot?.amountCents }, after: { internalAmountCents: invoice.amountCents, qboAmountCents: qboState.totalCents }, result: "ok" }, now);
+      return;
+    }
+    if (action === "skip") {
+      // Internal touched only a non-synced field (customerName), or QBO drifted alone:
+      // don't push internal's amount over QBO. Refresh the hash; keep the snapshot.
+      await upsertLink(db, { entityType: "invoice", internalId, qboId: qboState.Id, lastSyncedHash: hash, lastInternalVersion: invoice.version, status: "linked" }, now);
+      await writeAudit(db, { ...base, action: "skip", result: "ok", error: "no syncable field changed" }, now);
+      return;
+    }
+    if (action === "converged") {
+      await upsertLink(db, { entityType: "invoice", internalId, qboId: qboState.Id, lastSyncedHash: hash, lastInternalVersion: invoice.version, lastQboVersion: Number(qboState.SyncToken), lastSyncedSnapshot: canonicalFromInternal(invoice), status: "linked" }, now);
+      await writeAudit(db, { ...base, action: "skip", result: "ok", error: "converged (both sides match)" }, now);
+      return;
+    }
+    // action === "apply" → fall through to the update path.
+  }
+
+  // Apply: create / adopt / update QBO.
   const body = mapInvoiceToQbo(invoice, deps.defaults);
   let qboId: string;
   let qboVersion: number;
   let action: "create" | "update";
 
-  if (link?.qboId) {
-    const ref = await deps.qbo.read(link.qboId);
-    const updated = await deps.qbo.update({ ...body, Id: ref.Id, SyncToken: ref.SyncToken });
+  if (link?.qboId && qboState) {
+    const updated = await deps.qbo.update({ ...body, Id: qboState.Id, SyncToken: qboState.SyncToken });
     qboId = updated.Id;
     qboVersion = Number(updated.SyncToken);
     action = "update";
@@ -125,10 +159,6 @@ async function processInternalToQbo(
     }
   }
 
-  await upsertLink(db, { entityType: "invoice", internalId, qboId, lastSyncedHash: hash, lastInternalVersion: invoice.version, lastQboVersion: qboVersion, status: "linked" }, now);
-  await writeAudit(
-    db,
-    { eventId: event.eventId, entityType: "invoice", entityExternalId: internalId, action, before: link ? { qboId: link.qboId } : undefined, after: { qboId, hash }, result: "ok", correlationId },
-    now,
-  );
+  await upsertLink(db, { entityType: "invoice", internalId, qboId, lastSyncedHash: hash, lastInternalVersion: invoice.version, lastQboVersion: qboVersion, lastSyncedSnapshot: canonicalFromInternal(invoice), status: "linked" }, now);
+  await writeAudit(db, { ...base, action, before: link ? { qboId: link.qboId } : undefined, after: { qboId, hash }, result: "ok" }, now);
 }
