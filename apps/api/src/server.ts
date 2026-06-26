@@ -6,12 +6,16 @@ import { registerInternalRoutes } from "./internal/routes";
 import { registerOAuthRoutes } from "./oauth/routes";
 import { registerBridgeIngest } from "./bridge/ingest";
 import { registerQboWebhook } from "./bridge/qbo-ingest";
+import { registerObservabilityRoutes } from "./observability/routes";
+import type { ResolveDeps } from "./bridge/resolve";
 
 export interface ServerDeps {
   db: Database;
   sink: ChangeSink;
   qbo?: { cfg: QboConfig; fetchImpl?: typeof fetch };
   bridge?: { secret: string; qboVerifierToken?: string };
+  // Conflict resolution for the observability API. Present only when QBO is wired.
+  resolve?: ResolveDeps;
 }
 
 // buildServer is pure — it takes its dependencies, so tests can inject a
@@ -37,6 +41,7 @@ export function buildServer(deps?: ServerDeps): FastifyInstance {
         registerQboWebhook(app, { db: deps.db, verifierToken: deps.bridge.qboVerifierToken });
       }
     }
+    registerObservabilityRoutes(app, { db: deps.db, resolve: deps.resolve });
   }
 
   return app;

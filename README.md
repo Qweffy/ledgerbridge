@@ -50,6 +50,12 @@ Built and tested so far:
   past what we last synced, enqueues a **synthetic event** into the same idempotent outbox so the
   worker re-converges the state. Skips anything the worker already has in flight; writes one heartbeat
   audit row per pass. (Per-link refetch here; QBO's CDC endpoint is the production scale path.)
+- **Admin / observability API** — a read API over the engine's state (`/status` with event counts +
+  oldest-pending lag + dead-letter/conflict counts + last-reconcile; `/events`, `/links`,
+  `/conflicts`, `/audit`, each with detail routes) plus two operator actions: **`/conflicts/:id/resolve`**
+  (pick a winner) and **`/events/:id/replay`** (re-queue a dead-letter). The response contract lives as
+  zod schemas in `packages/shared`, so the dashboard consumes it type-safely — it's a one-env-var swap
+  from the mock client to the real API.
 
 Verified end-to-end against a real QBO sandbox (an internal invoice propagates to a QBO invoice;
 re-delivered webhooks are dropped). The reverse direction's logic — including the no-loop round trip —
@@ -160,3 +166,6 @@ internal system with the **echo dropped in both directions** (a full round trip 
 - Production hardening, deliberately out of scope for one connected sandbox: per-sender webhook
   keys with a key id and rotation, and a dedicated OAuth state secret rather than one derived from
   the client secret.
+- The admin/observability API is **unauthenticated** in this sandbox build (it's a demo surface for
+  the dashboard). In production it would sit behind a bearer token / session — the route layer is the
+  single place to add it.

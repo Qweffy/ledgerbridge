@@ -1,5 +1,7 @@
 import { config } from "dotenv";
+import type { FastifyInstance } from "fastify";
 import type { QboConfig } from "./config";
+import type { ResolveDeps } from "./bridge/resolve";
 
 config({ path: ".env.local" });
 
@@ -35,57 +37,72 @@ try {
 
 const qboVerifierToken = process.env.QBO_WEBHOOK_VERIFIER_TOKEN;
 
+// Build the QBO-dependent deps (sync ops + conflict resolution) once, before the
+// server, so the observability API's /conflicts/:id/resolve can reuse them. They only
+// exist when QBO + a connected realm + default refs are configured.
+const realmId = process.env.QBO_REALM_ID;
+const customerRef = process.env.QBO_DEFAULT_CUSTOMER;
+const itemRef = process.env.QBO_DEFAULT_ITEM;
+
+let resolveDeps: ResolveDeps | undefined;
+let worker: { stop: () => Promise<void> } | undefined;
+let reconciler: { stop: () => Promise<void> } | undefined;
+let startBackground: ((app: FastifyInstance) => void) | undefined;
+
+if (qbo && realmId && customerRef && itemRef) {
+  const ops = createQboInvoiceOps({ db, cfg: qbo.cfg, realmId });
+  const paymentOps = createQboPaymentOps({ db, cfg: qbo.cfg, realmId });
+  // Reverse direction: write QBO-sourced changes back into the internal system. These
+  // calls emit internal webhooks; the echo is dropped by hash on the way back.
+  const applyToInternal = {
+    updateAmount: (id: string, amountCents: number) => updateInvoice(db, sink, id, { amountCents }),
+    remove: (id: string) => deleteInvoice(db, sink, id),
+  };
+  resolveDeps = {
+    qbo: ops,
+    internal: applyToInternal,
+    refetchInternal: (id) => getInvoice(db, id),
+    defaults: { customerRef, itemRef },
+  };
+  startBackground = (app) => {
+    worker = startWorker(db, {
+      processor: {
+        refetchInternalInvoice: (id) => getInvoice(db, id),
+        qbo: ops,
+        defaults: { customerRef, itemRef },
+        applyToInternal,
+        // Payment sync: internal payment → QBO Payment linked to the invoice.
+        payments: {
+          refetchPayment: (id) => getPayment(db, id),
+          qboPayments: paymentOps,
+          defaults: { customerRef },
+        },
+      },
+      pollIntervalMs: 1000,
+      onError: (err) => app.log.error(err),
+    });
+    // Periodic safety net: match unlinked invoices + recover drift from dropped webhooks.
+    reconciler = startReconciler(db, {
+      qbo: ops,
+      refetchInternal: (id) => getInvoice(db, id),
+      listInternalInvoices: () => listInvoices(db),
+      realmId,
+      onError: (err) => app.log.error(err),
+    });
+    app.log.info("sync worker + reconciler started");
+  };
+}
+
 const app = buildServer({
   db,
   sink,
   qbo,
   bridge: internalSecret ? { secret: internalSecret, qboVerifierToken } : undefined,
+  resolve: resolveDeps,
 });
 
-// Start the sync worker when QBO + a connected realm + default refs are configured.
-const realmId = process.env.QBO_REALM_ID;
-const customerRef = process.env.QBO_DEFAULT_CUSTOMER;
-const itemRef = process.env.QBO_DEFAULT_ITEM;
-let worker: { stop: () => Promise<void> } | undefined;
-let reconciler: { stop: () => Promise<void> } | undefined;
-if (qbo && realmId && customerRef && itemRef) {
-  const ops = createQboInvoiceOps({ db, cfg: qbo.cfg, realmId });
-  const paymentOps = createQboPaymentOps({ db, cfg: qbo.cfg, realmId });
-  worker = startWorker(db, {
-    processor: {
-      refetchInternalInvoice: (id) => getInvoice(db, id),
-      qbo: ops,
-      defaults: { customerRef, itemRef },
-      // Reverse direction: write QBO-sourced changes back into the internal system.
-      // These calls emit internal webhooks; the echo is dropped by hash on the way back.
-      applyToInternal: {
-        updateAmount: (id, amountCents) => updateInvoice(db, sink, id, { amountCents }),
-        remove: (id) => deleteInvoice(db, sink, id),
-      },
-      // Payment sync: internal payment → QBO Payment linked to the invoice.
-      payments: {
-        refetchPayment: (id) => getPayment(db, id),
-        qboPayments: paymentOps,
-        defaults: { customerRef },
-      },
-    },
-    pollIntervalMs: 1000,
-    onError: (err) => app.log.error(err),
-  });
-  app.log.info("sync worker started");
-
-  // Periodic safety net: match unlinked invoices + recover drift from dropped webhooks.
-  reconciler = startReconciler(db, {
-    qbo: ops,
-    refetchInternal: (id) => getInvoice(db, id),
-    listInternalInvoices: () => listInvoices(db),
-    realmId,
-    onError: (err) => app.log.error(err),
-  });
-  app.log.info("reconciler started");
-} else {
-  app.log.warn("sync worker not started (missing QBO realm/defaults)");
-}
+if (startBackground) startBackground(app);
+else app.log.warn("sync worker not started (missing QBO realm/defaults)");
 
 async function shutdown(): Promise<void> {
   app.log.info("shutting down");

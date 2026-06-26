@@ -91,3 +91,130 @@ export function linkStatusToSyncStatus(status: LinkStatus): SyncStatus {
       return "skipped";
   }
 }
+
+// ---- Dashboard source vocabulary: the UI says "qbo", the data model says "quickbooks" ----
+
+export const DASHBOARD_SOURCES = ["internal", "qbo"] as const;
+export const dashboardSourceSchema = z.enum(DASHBOARD_SOURCES);
+export type DashboardSource = z.infer<typeof dashboardSourceSchema>;
+
+export function systemIdToSource(id: SystemId): DashboardSource {
+  return id === "quickbooks" ? "qbo" : "internal";
+}
+export function sourceToSystemId(source: DashboardSource): SystemId {
+  return source === "qbo" ? "quickbooks" : "internal";
+}
+
+// ---- Observability API DTOs (the dashboard contract) ----
+// Snapshots are open key→value maps: we populate only the fields our model actually
+// has. Nullable fields mirror the DB (a link mid-backfill can have one side null).
+
+const auditResultSchema = z.enum(["ok", "error"]);
+const snapshotSchema = z.record(z.string());
+const timelineEntrySchema = z.object({
+  ts: z.string(),
+  action: auditActionSchema,
+  result: auditResultSchema,
+  detail: z.string(),
+});
+
+export const statusDtoSchema = z.object({
+  counts: z.object({
+    pending: z.number(),
+    processing: z.number(),
+    done: z.number(),
+    dead: z.number(),
+  }),
+  oldestPendingLagSec: z.number().nullable(),
+  deadLetterCount: z.number(),
+  conflictCount: z.number(),
+  lastReconcileAt: z.string().nullable(),
+});
+export type StatusDto = z.infer<typeof statusDtoSchema>;
+
+export const linkDtoSchema = z.object({
+  id: z.string(),
+  entityType: entityTypeSchema,
+  internalId: z.string().nullable(),
+  qboId: z.string().nullable(),
+  status: linkStatusSchema,
+  lastSyncedAt: z.string().nullable(),
+  drift: z.boolean(),
+});
+export type LinkDto = z.infer<typeof linkDtoSchema>;
+
+export const linkDetailDtoSchema = linkDtoSchema.extend({
+  internalSnapshot: snapshotSchema,
+  qboSnapshot: snapshotSchema,
+  timeline: z.array(timelineEntrySchema),
+});
+export type LinkDetailDto = z.infer<typeof linkDetailDtoSchema>;
+
+export const conflictDtoSchema = z.object({
+  id: z.string(),
+  linkId: z.string(),
+  eventId: z.string(),
+  entityType: entityTypeSchema,
+  internalId: z.string().nullable(),
+  customer: z.string(),
+  reason: z.string(),
+  openedAt: z.string().nullable(),
+  conflictingFields: z.array(z.string()),
+});
+export type ConflictDto = z.infer<typeof conflictDtoSchema>;
+
+export const conflictDetailDtoSchema = conflictDtoSchema.extend({
+  before: snapshotSchema,
+  after: snapshotSchema,
+});
+export type ConflictDetailDto = z.infer<typeof conflictDetailDtoSchema>;
+
+export const eventDtoSchema = z.object({
+  id: z.string(),
+  eventId: z.string(),
+  source: dashboardSourceSchema,
+  entityType: entityTypeSchema,
+  externalId: z.string(),
+  operation: z.string(),
+  status: eventStatusSchema,
+  attempts: z.number(),
+  maxAttempts: z.number(),
+  nextAttemptAt: z.string().nullable(),
+  lastError: z.string().nullable(),
+  receivedAt: z.string().nullable(),
+  correlationId: z.string().nullable(),
+});
+export type EventDto = z.infer<typeof eventDtoSchema>;
+
+export const eventDetailDtoSchema = eventDtoSchema.extend({
+  payload: z.record(z.unknown()),
+  auditTrail: z.array(timelineEntrySchema),
+});
+export type EventDetailDto = z.infer<typeof eventDetailDtoSchema>;
+
+export const auditEntryDtoSchema = z.object({
+  id: z.string(),
+  eventId: z.string().nullable(),
+  entityType: entityTypeSchema.nullable(),
+  action: auditActionSchema,
+  before: z.unknown().nullable(),
+  after: z.unknown().nullable(),
+  result: auditResultSchema,
+  error: z.string().nullable(),
+  correlationId: z.string().nullable(),
+  ts: z.string(),
+});
+export type AuditEntryDto = z.infer<typeof auditEntryDtoSchema>;
+
+export const resolveRequestSchema = z.object({ winner: dashboardSourceSchema });
+export type ResolveRequest = z.infer<typeof resolveRequestSchema>;
+export const resolveResponseSchema = z.object({
+  id: z.string(),
+  resolved: z.literal(true),
+  winner: dashboardSourceSchema,
+});
+export const replayResponseSchema = z.object({
+  id: z.string(),
+  status: z.literal("pending"),
+  replayed: z.literal(true),
+});

@@ -8,7 +8,7 @@ import { processEvent, type ProcessorDeps, type SyncEventRow } from "./processor
 // instead of retrying with backoff.
 export class PermanentError extends Error {}
 
-const DEFAULT_MAX_ATTEMPTS = 8;
+export const DEFAULT_MAX_ATTEMPTS = 8;
 const BACKOFF_BASE_MS = 1000;
 const BACKOFF_CAP_MS = 5 * 60 * 1000;
 // A row locked longer than this is presumed crashed and is reclaimable. `attempts`

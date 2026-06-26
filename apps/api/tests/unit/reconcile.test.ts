@@ -167,7 +167,7 @@ describe("bridge — reconciler (backfill + drift)", () => {
   });
 
   it("skips an entity that already has an in-flight event (no thrash with the worker)", async () => {
-    const inv = await createInvoice(h.db, sink, { customerName: "Acme", amountCents: 10000 });
+    await createInvoice(h.db, sink, { customerName: "Acme", amountCents: 10000 });
     await enqueueInternalEvent(h.db, lastEvent()); // queued, not yet processed
 
     const summary = await reconcileOnce(h.db, recon);
