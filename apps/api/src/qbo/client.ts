@@ -55,3 +55,9 @@ export function updateInvoice(deps: QboClientDeps, invoice: Record<string, unkno
 export function voidInvoice(deps: QboClientDeps, id: string, syncToken: string): Promise<unknown> {
   return qboRequest(deps, "POST", "/invoice?operation=void", { Id: id, SyncToken: syncToken });
 }
+
+// Run a QBO SQL-like query (used to find an invoice by DocNumber for idempotent
+// check-before-create, and to look up the default customer/item).
+export function qboQuery(deps: QboClientDeps, statement: string): Promise<unknown> {
+  return qboRequest(deps, "GET", `/query?query=${encodeURIComponent(statement)}`);
+}
