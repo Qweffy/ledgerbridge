@@ -1,6 +1,6 @@
 import { drizzle } from 'drizzle-orm/neon-http';
 import { neon } from '@neondatabase/serverless';
-import * as schema from './schema';
+import { fullSchema } from './types';
 import { configureNeonForLocalProxy } from './neon-local';
 
 const connectionString = process.env.DATABASE_URL;
@@ -15,5 +15,5 @@ if (!connectionString) {
 // production since real Neon hosts don't match.
 configureNeonForLocalProxy(connectionString);
 
-export const db = drizzle(neon(connectionString), { schema });
-export { schema };
+export const db = drizzle(neon(connectionString), { schema: fullSchema });
+export { fullSchema as schema };
