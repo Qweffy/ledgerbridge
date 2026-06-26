@@ -17,96 +17,12 @@ import {
 import { enqueueInternalEvent } from "../../src/bridge/ingest";
 import { getLinkByInternalId } from "../../src/bridge/links";
 import { processOne, type WorkerDeps } from "../../src/bridge/worker";
-import type { QboInvoiceOps } from "../../src/bridge/qbo-ops";
 import { buildServer } from "../../src/server";
+import { createFakeQbo } from "../helpers/fake-qbo";
 
 function captureSink(): { sink: ChangeSink; events: ChangeEvent[] } {
   const events: ChangeEvent[] = [];
   return { sink: { emit: async (e) => void events.push(e) }, events };
-}
-
-// In-memory QBO double: tracks invoices by Id and DocNumber, and records what the
-// processor actually asked it to do (creates, updates, the request id, the void
-// SyncToken) so tests can assert the side effects — not just the wiring.
-function createFakeQbo() {
-  interface Inv {
-    Id: string;
-    SyncToken: string;
-    DocNumber: string;
-    voided: boolean;
-  }
-  const byId = new Map<string, Inv>();
-  const byDoc = new Map<string, string>();
-  let seq = 100;
-  let createCalls = 0;
-  let updateCalls = 0;
-  let lastCreateRequestId: string | undefined;
-  let lastUpdate: Record<string, unknown> | undefined;
-  let lastVoidSyncToken: string | undefined;
-
-  const ops: QboInvoiceOps = {
-    async findByDocNumber(docNumber) {
-      const id = byDoc.get(docNumber);
-      if (id === undefined) return undefined;
-      const inv = byId.get(id);
-      return inv ? { Id: inv.Id, SyncToken: inv.SyncToken } : undefined;
-    },
-    async create(invoice, requestId) {
-      createCalls += 1;
-      lastCreateRequestId = requestId;
-      const id = String((seq += 1));
-      const docNumber = String((invoice as { DocNumber?: unknown }).DocNumber ?? id);
-      byId.set(id, { Id: id, SyncToken: "0", DocNumber: docNumber, voided: false });
-      byDoc.set(docNumber, id);
-      return { Id: id, SyncToken: "0" };
-    },
-    async read(id) {
-      const inv = byId.get(id);
-      if (!inv) throw new Error(`qbo invoice ${id} not found`);
-      return { Id: inv.Id, SyncToken: inv.SyncToken };
-    },
-    async update(invoice) {
-      updateCalls += 1;
-      lastUpdate = invoice;
-      const id = String((invoice as { Id?: unknown }).Id);
-      const inv = byId.get(id);
-      if (!inv) throw new Error(`qbo invoice ${id} not found`);
-      inv.SyncToken = String(Number(inv.SyncToken) + 1);
-      return { Id: inv.Id, SyncToken: inv.SyncToken };
-    },
-    async voidInvoice(id, syncToken) {
-      lastVoidSyncToken = syncToken;
-      const inv = byId.get(id);
-      if (inv) inv.voided = true;
-    },
-  };
-
-  return {
-    ops,
-    byId,
-    byDoc,
-    seed(docNumber: string): string {
-      const id = String((seq += 1));
-      byId.set(id, { Id: id, SyncToken: "0", DocNumber: docNumber, voided: false });
-      byDoc.set(docNumber, id);
-      return id;
-    },
-    get createCalls() {
-      return createCalls;
-    },
-    get updateCalls() {
-      return updateCalls;
-    },
-    get lastCreateRequestId() {
-      return lastCreateRequestId;
-    },
-    get lastUpdate() {
-      return lastUpdate;
-    },
-    get lastVoidSyncToken() {
-      return lastVoidSyncToken;
-    },
-  };
 }
 
 function first<T>(arr: T[]): T {
@@ -185,6 +101,8 @@ describe("bridge — internal → QBO sync core", () => {
     expect(qboId && fake.byId.get(qboId)?.SyncToken).toBe("1");
     const link = await getLinkByInternalId(h.db, "invoice", inv.id);
     expect(link?.lastInternalVersion).toBe(2);
+    // the QBO version we wrote is recorded — the reverse direction echoes on it
+    expect(link?.lastQboVersion).toBe(1);
   });
 
   it("re-delivery of an unchanged invoice is short-circuited (no QBO call)", async () => {

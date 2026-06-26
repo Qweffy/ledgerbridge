@@ -18,12 +18,30 @@ export async function getLinkByInternalId(
   return row;
 }
 
+// The reverse direction starts from a QBO id (the webhook's entity id) and needs
+// the link to recover the internal id and the last QBO version we wrote back.
+export async function getLinkByQboId(
+  db: Database,
+  entityType: EntityType,
+  qboId: string,
+): Promise<LinkRow | undefined> {
+  const [row] = await db
+    .select()
+    .from(links)
+    .where(and(eq(links.entityType, entityType), eq(links.qboId, qboId)))
+    .limit(1);
+  return row;
+}
+
 export interface UpsertLinkInput {
   entityType: EntityType;
   internalId: string;
   qboId: string;
   lastSyncedHash: string;
   lastInternalVersion: number;
+  // The QBO SyncToken we last wrote or observed. Echo detection compares an
+  // incoming change's version to this to drop our own write-back.
+  lastQboVersion?: number;
   status: LinkStatus;
 }
 
@@ -33,6 +51,8 @@ export async function upsertLink(
   input: UpsertLinkInput,
   now: Date = new Date(),
 ): Promise<void> {
+  const qboVersion =
+    input.lastQboVersion !== undefined ? { lastQboVersion: input.lastQboVersion } : {};
   const existing = await getLinkByInternalId(db, input.entityType, input.internalId);
   if (existing) {
     await db
@@ -41,6 +61,7 @@ export async function upsertLink(
         qboId: input.qboId,
         lastSyncedHash: input.lastSyncedHash,
         lastInternalVersion: input.lastInternalVersion,
+        ...qboVersion,
         status: input.status,
         updatedAt: now,
       })
@@ -53,6 +74,7 @@ export async function upsertLink(
     qboId: input.qboId,
     lastSyncedHash: input.lastSyncedHash,
     lastInternalVersion: input.lastInternalVersion,
+    ...qboVersion,
     status: input.status,
     createdAt: now,
     updatedAt: now,

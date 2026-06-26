@@ -28,23 +28,32 @@ Built and tested so far:
 - **Sync core (internal → QBO)** — signed-webhook ingest → durable outbox **worker** with a
   `FOR UPDATE SKIP LOCKED` lease → **idempotent apply** (check-by-external-id before create) →
   `links` + `audit_log`, with exponential-backoff retries, dead-lettering, and graceful shutdown.
+- **Reverse sync (QBO → internal) + loop prevention** — a `/webhooks/qbo` receiver (Intuit HMAC
+  verify + Change-Data-Capture parse) feeds the same outbox; the reverse processor refetches the QBO
+  invoice and applies it to the internal system. Two complementary guards keep the two directions
+  from ping-ponging: our own write-back is recognised by the QBO **`SyncToken`** we recorded, and the
+  internal-side echo it triggers is recognised by the state **hash** — so a change made in one system
+  lands in the other exactly once.
 
 Verified end-to-end against a real QBO sandbox (an internal invoice propagates to a QBO invoice;
-re-delivered webhooks are dropped). The reverse direction (QBO → internal), conflict resolution,
-reconciliation, the observability API and the web dashboard are next.
+re-delivered webhooks are dropped). The reverse direction's logic — including the no-loop round trip —
+is proven deterministically (in-process Postgres + a mocked QBO boundary); live webhook delivery needs
+an ngrok tunnel to the sandbox. Conflict resolution, reconciliation, the observability API and the web
+dashboard are next.
 
 ## Architecture
 
 ```
 Internal system  ──signed webhook──▶ ┌───────────────────────────────┐ ──API write──▶ QuickBooks Online
    (/internal/*)                      │  ingest → outbox → worker      │                 (OAuth2, sandbox)
-                 ◀──refetch (M5)──    │  verify · dedupe · enqueue     │ ◀──webhook (M5)─
+                 ◀──refetch+apply──   │  verify · dedupe · enqueue     │ ◀──CDC webhook──
                                       │  refetch → map → apply → audit │
                                       └───────────────┬───────────────┘
                                                       │ read / write
                               ┌──────────┬────────────┴───────────┬──────────────┐
                               │  links   │      sync_events        │  audit_log   │   + oauth_tokens
                               └──────────┴─────────────────────────┴──────────────┘
+       loop prevention: QBO SyncToken (inbound echo) + state hash (internal echo)
 ```
 
 ## Stack
@@ -119,8 +128,9 @@ npm run db:migrate  # apply migrations
 
 The API suite runs against an in-process Postgres (PGlite) with the real migrations applied, so it
 exercises the production schema — including the idempotency and outbox logic — without Docker or a
-remote database. The most important edge cases (duplicate webhook, timeout-after-write "money shot",
-retry/dead-letter, delete→void) are covered.
+remote database. The most important edge cases are covered: duplicate webhook, timeout-after-write
+("money shot"), retry/dead-letter, delete→void, and the reverse direction — a QBO edit applied to the
+internal system with the **echo dropped in both directions** (a full round trip that proves no loop).
 
 ## Security
 

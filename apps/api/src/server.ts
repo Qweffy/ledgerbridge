@@ -5,12 +5,13 @@ import type { ChangeSink } from "./internal/sink";
 import { registerInternalRoutes } from "./internal/routes";
 import { registerOAuthRoutes } from "./oauth/routes";
 import { registerBridgeIngest } from "./bridge/ingest";
+import { registerQboWebhook } from "./bridge/qbo-ingest";
 
 export interface ServerDeps {
   db: Database;
   sink: ChangeSink;
   qbo?: { cfg: QboConfig; fetchImpl?: typeof fetch };
-  bridge?: { secret: string };
+  bridge?: { secret: string; qboVerifierToken?: string };
 }
 
 // buildServer is pure — it takes its dependencies, so tests can inject a
@@ -32,6 +33,9 @@ export function buildServer(deps?: ServerDeps): FastifyInstance {
     }
     if (deps.bridge) {
       registerBridgeIngest(app, { db: deps.db, secret: deps.bridge.secret });
+      if (deps.bridge.qboVerifierToken) {
+        registerQboWebhook(app, { db: deps.db, verifierToken: deps.bridge.qboVerifierToken });
+      }
     }
   }
 

@@ -12,21 +12,51 @@ export interface QboRef {
   SyncToken: string;
 }
 
+// The full state the reverse direction (QBO → internal) needs after a refetch:
+// the version to compare against our last write-back, the amount, and whether the
+// invoice was voided in QBO.
+export interface QboInvoiceState extends QboRef {
+  totalCents: number;
+  voided: boolean;
+  docNumber: string | undefined;
+}
+
 // The invoice operations the processor needs, abstracted so tests inject an
 // in-memory fake instead of hitting Intuit.
 export interface QboInvoiceOps {
   findByDocNumber(docNumber: string): Promise<QboRef | undefined>;
   create(invoice: Record<string, unknown>, requestId: string): Promise<QboRef>;
-  read(id: string): Promise<QboRef>;
+  read(id: string): Promise<QboInvoiceState>;
   update(invoice: Record<string, unknown>): Promise<QboRef>;
-  voidInvoice(id: string, syncToken: string): Promise<void>;
+  voidInvoice(id: string, syncToken: string): Promise<QboRef>;
 }
 
+interface QboInvoiceBody extends QboRef {
+  DocNumber?: string;
+  TotalAmt?: number;
+  PrivateNote?: string;
+}
 interface InvoiceEnvelope {
-  Invoice: QboRef;
+  Invoice: QboInvoiceBody;
 }
 interface QueryEnvelope {
   QueryResponse: { Invoice?: QboRef[] };
+}
+
+// QBO has no boolean "voided" flag — a void zeroes the lines and appends "Voided"
+// to PrivateNote. That marker is the signal the reverse direction keys on.
+function isVoided(inv: QboInvoiceBody): boolean {
+  return String(inv.PrivateNote ?? "").includes("Voided");
+}
+
+function toState(inv: QboInvoiceBody): QboInvoiceState {
+  return {
+    Id: inv.Id,
+    SyncToken: inv.SyncToken,
+    totalCents: Math.round((inv.TotalAmt ?? 0) * 100),
+    voided: isVoided(inv),
+    docNumber: inv.DocNumber,
+  };
 }
 
 // The real implementation, wrapping the QBO Accounting client. Internal ids are
@@ -46,14 +76,15 @@ export function createQboInvoiceOps(deps: QboClientDeps): QboInvoiceOps {
     },
     async read(id) {
       const res = (await getInvoice(deps, id)) as InvoiceEnvelope;
-      return res.Invoice;
+      return toState(res.Invoice);
     },
     async update(invoice) {
       const res = (await updateInvoice(deps, invoice)) as InvoiceEnvelope;
       return res.Invoice;
     },
     async voidInvoice(id, syncToken) {
-      await voidInvoice(deps, id, syncToken);
+      const res = (await voidInvoice(deps, id, syncToken)) as InvoiceEnvelope;
+      return res.Invoice;
     },
   };
 }

@@ -8,7 +8,7 @@ const { db } = await import("../db");
 const { buildServer } = await import("./server");
 const { loadQboConfig } = await import("./config");
 const { createWebhookSink, noopSink } = await import("./internal/sink");
-const { getInvoice } = await import("./internal/service");
+const { getInvoice, updateInvoice, deleteInvoice } = await import("./internal/service");
 const { createQboInvoiceOps } = await import("./bridge/qbo-ops");
 const { startWorker } = await import("./bridge/worker");
 
@@ -32,11 +32,13 @@ try {
   );
 }
 
+const qboVerifierToken = process.env.QBO_WEBHOOK_VERIFIER_TOKEN;
+
 const app = buildServer({
   db,
   sink,
   qbo,
-  bridge: internalSecret ? { secret: internalSecret } : undefined,
+  bridge: internalSecret ? { secret: internalSecret, qboVerifierToken } : undefined,
 });
 
 // Start the sync worker when QBO + a connected realm + default refs are configured.
@@ -51,6 +53,12 @@ if (qbo && realmId && customerRef && itemRef) {
       refetchInternalInvoice: (id) => getInvoice(db, id),
       qbo: ops,
       defaults: { customerRef, itemRef },
+      // Reverse direction: write QBO-sourced changes back into the internal system.
+      // These calls emit internal webhooks; the echo is dropped by hash on the way back.
+      applyToInternal: {
+        updateAmount: (id, amountCents) => updateInvoice(db, sink, id, { amountCents }),
+        remove: (id) => deleteInvoice(db, sink, id),
+      },
     },
     pollIntervalMs: 1000,
     onError: (err) => app.log.error(err),
