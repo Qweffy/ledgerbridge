@@ -7,6 +7,7 @@ import type { StatusDto } from "@ledgerbridge/shared";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { timeAgo } from "@/lib/api/time";
 import { Icon } from "./icon";
+import { StateBlock } from "./state-block";
 
 export function Skeleton({ w = "100%", h = 12, r = "var(--radius-sm)", style }: { w?: number | string; h?: number; r?: string; style?: CSSProperties }) {
   return <span style={{ display: "block", width: w, height: h, borderRadius: r, background: "var(--surface-hover)", animation: "lb-shimmer 1.4s var(--ease-in-out) infinite", ...style }} />;
@@ -127,6 +128,55 @@ export function HealthIndicator({ status }: { status: StatusDto }) {
         <div style={{ font: "var(--fw-medium) var(--text-2xs)/1 var(--font-sans)", letterSpacing: "var(--tracking-caps)", textTransform: "uppercase", color: "var(--text-faint)", whiteSpace: "nowrap" }}>Last reconcile</div>
         <div style={{ marginTop: 5, font: "var(--fw-medium) var(--text-sm)/1 var(--font-mono)", color: "var(--text-secondary)" }}>{timeAgo(status.lastReconcileAt)}</div>
       </div>
+    </div>
+  );
+}
+
+// audit action → color + icon (shared by Timeline + the audit log)
+export const ACTION_META: Record<string, { fg: string; icon: string }> = {
+  create: { fg: "var(--action-create-fg)", icon: "Plus" },
+  update: { fg: "var(--action-update-fg)", icon: "Pencil" },
+  void: { fg: "var(--action-void-fg)", icon: "Ban" },
+  delete: { fg: "var(--action-delete-fg)", icon: "Trash2" },
+  conflict: { fg: "var(--action-conflict-fg)", icon: "GitMerge" },
+  conflict_resolved: { fg: "var(--action-conflict-resolved-fg)", icon: "GitMerge" },
+  skip: { fg: "var(--action-skip-fg)", icon: "CopyMinus" },
+  error: { fg: "var(--action-error-fg)", icon: "XCircle" },
+};
+
+export interface TimelineItem {
+  ts: string;
+  action: string;
+  result: string;
+  detail: string;
+}
+
+export function Timeline({ items }: { items: TimelineItem[] }) {
+  if (!items || items.length === 0) return <StateBlock icon="Clock" title="No history" body="No recorded changes yet." />;
+  return (
+    <div style={{ display: "flex", flexDirection: "column" }}>
+      {items.map((it, i) => {
+        const m = ACTION_META[it.action] ?? ACTION_META.update;
+        const last = i === items.length - 1;
+        return (
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "24px minmax(0,1fr)", gap: "var(--space-3)" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <span style={{ width: 22, height: 22, borderRadius: 999, display: "grid", placeItems: "center", background: "var(--surface-hover)", color: m.fg, flexShrink: 0 }}>
+                <Icon name={m.icon} size={12} />
+              </span>
+              {!last && <span style={{ flex: 1, width: 1, background: "var(--border-subtle)", margin: "2px 0" }} />}
+            </div>
+            <div style={{ paddingBottom: last ? 0 : "var(--space-4)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ font: "var(--fw-medium) var(--text-sm)/1.3 var(--font-sans)", color: "var(--text-primary)", textTransform: "capitalize" }}>{String(it.action).replace("_", " ")}</span>
+                {it.result === "error" && <span style={{ font: "var(--text-2xs)/1 var(--font-sans)", color: "var(--status-failed-fg)" }}>failed</span>}
+              </div>
+              <div style={{ marginTop: 2, font: "var(--text-xs)/1.4 var(--font-sans)", color: "var(--text-muted)" }}>{it.detail}</div>
+              <div title={it.ts} style={{ marginTop: 3, font: "var(--text-2xs)/1 var(--font-mono)", color: "var(--text-faint)" }}>{timeAgo(it.ts)}</div>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
