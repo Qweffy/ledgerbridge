@@ -17,7 +17,7 @@ import {
 import { enqueueInternalEvent } from "../../src/bridge/ingest";
 import { getLinkByInternalId } from "../../src/bridge/links";
 import { processOne, type WorkerDeps } from "../../src/bridge/worker";
-import type { QboInvoiceOps, QboRef } from "../../src/bridge/qbo-ops";
+import type { QboInvoiceOps } from "../../src/bridge/qbo-ops";
 import { buildServer } from "../../src/server";
 
 function captureSink(): { sink: ChangeSink; events: ChangeEvent[] } {

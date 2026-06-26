@@ -8,15 +8,19 @@ const { db } = await import("../db");
 const { buildServer } = await import("./server");
 const { loadQboConfig } = await import("./config");
 const { createWebhookSink, noopSink } = await import("./internal/sink");
+const { getInvoice } = await import("./internal/service");
+const { createQboInvoiceOps } = await import("./bridge/qbo-ops");
+const { startWorker } = await import("./bridge/worker");
 
 const PORT = Number(process.env.PORT ?? 3001);
 
-// The internal system emits to the bridge once that endpoint exists (M4). Until
-// INTERNAL_WEBHOOK_TARGET is set, mutations still record changes but don't emit.
+// The internal system emits signed webhooks to the bridge when a target is set.
+const internalSecret = process.env.INTERNAL_WEBHOOK_SECRET;
 const target = process.env.INTERNAL_WEBHOOK_TARGET;
-const secret = process.env.INTERNAL_WEBHOOK_SECRET;
 const sink =
-  target && secret ? createWebhookSink({ url: target, secret }) : noopSink;
+  target && internalSecret
+    ? createWebhookSink({ url: target, secret: internalSecret })
+    : noopSink;
 
 let qbo: { cfg: QboConfig } | undefined;
 try {
@@ -28,7 +32,43 @@ try {
   );
 }
 
-const app = buildServer({ db, sink, qbo });
+const app = buildServer({
+  db,
+  sink,
+  qbo,
+  bridge: internalSecret ? { secret: internalSecret } : undefined,
+});
+
+// Start the sync worker when QBO + a connected realm + default refs are configured.
+const realmId = process.env.QBO_REALM_ID;
+const customerRef = process.env.QBO_DEFAULT_CUSTOMER;
+const itemRef = process.env.QBO_DEFAULT_ITEM;
+let worker: { stop: () => Promise<void> } | undefined;
+if (qbo && realmId && customerRef && itemRef) {
+  const ops = createQboInvoiceOps({ db, cfg: qbo.cfg, realmId });
+  worker = startWorker(db, {
+    processor: {
+      refetchInternalInvoice: (id) => getInvoice(db, id),
+      qbo: ops,
+      defaults: { customerRef, itemRef },
+    },
+    pollIntervalMs: 1000,
+    onError: (err) => app.log.error(err),
+  });
+  app.log.info("sync worker started");
+} else {
+  app.log.warn("sync worker not started (missing QBO realm/defaults)");
+}
+
+async function shutdown(): Promise<void> {
+  app.log.info("shutting down");
+  await worker?.stop();
+  await app.close();
+  process.exit(0);
+}
+process.on("SIGTERM", () => void shutdown());
+process.on("SIGINT", () => void shutdown());
+
 try {
   await app.listen({ port: PORT, host: "0.0.0.0" });
 } catch (err) {
