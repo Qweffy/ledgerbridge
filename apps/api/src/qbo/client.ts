@@ -1,6 +1,7 @@
 import type { QboConfig } from "../config";
 import type { Database } from "../../db/types";
 import { getValidAccessToken } from "../oauth/manager";
+import { PermanentError } from "../bridge/errors";
 
 // A thin QBO Accounting API client for Invoices: talks to the API with a fresh
 // access token and the pinned minorversion. Response shapes are returned as
@@ -35,7 +36,12 @@ async function qboRequest(
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) {
-    throw new Error(`QBO ${method} ${path} → ${res.status}: ${await res.text()}`);
+    const detail = `QBO ${method} ${path} → ${res.status}: ${await res.text()}`;
+    // 400/422 are permanent — a malformed or invalid request won't succeed on a
+    // retry, so dead-letter it now. 401/403/404/429/5xx/network stay transient
+    // (auth refreshes, rate-limit and server errors recover) and retry with backoff.
+    if (res.status === 400 || res.status === 422) throw new PermanentError(detail);
+    throw new Error(detail);
   }
   return res.json();
 }

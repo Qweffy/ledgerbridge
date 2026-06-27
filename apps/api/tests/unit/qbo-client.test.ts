@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb, type TestDb } from "../helpers/db";
 import { saveTokens } from "../../src/oauth/store";
 import { createInvoice, qboQuery, updateInvoice, voidInvoice } from "../../src/qbo/client";
+import { PermanentError } from "../../src/bridge/errors";
 import type { QboConfig } from "../../src/config";
 
 const cfg: QboConfig = {
@@ -65,11 +66,19 @@ describe("qbo client", () => {
     expect(JSON.parse(calls[0]?.body ?? "{}")).toMatchObject({ Id: "1", SyncToken: "3" });
   });
 
-  it("throws on a non-2xx response (so the worker retries)", async () => {
-    const { fetchImpl } = recordingFetch(500, { Fault: { Error: [{ Message: "boom" }] } });
+  it("a transient 5xx throws a plain Error (the worker retries with backoff)", async () => {
+    const { fetchImpl } = recordingFetch(503, { Fault: { Error: [{ Message: "boom" }] } });
+    const err = await qboQuery({ db: h.db, cfg, realmId: "r1", fetchImpl }, "select Id from Invoice").catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(PermanentError);
+    expect(String(err)).toMatch(/503/);
+  });
+
+  it("a permanent 400 throws PermanentError (the worker dead-letters immediately)", async () => {
+    const { fetchImpl } = recordingFetch(400, { Fault: { Error: [{ Message: "invalid DocNumber" }] } });
     await expect(
-      qboQuery({ db: h.db, cfg, realmId: "r1", fetchImpl }, "select Id from Invoice"),
-    ).rejects.toThrow(/500/);
+      createInvoice({ db: h.db, cfg, realmId: "r1", fetchImpl }, { DocNumber: "bad" }),
+    ).rejects.toBeInstanceOf(PermanentError);
   });
 
   it("query url-encodes the statement", async () => {

@@ -3,10 +3,9 @@ import { syncEvents } from "../../db/schema";
 import type { Database } from "../../db/types";
 import { writeAudit } from "./audit";
 import { processEvent, type ProcessorDeps, type SyncEventRow } from "./processor";
+import { PermanentError } from "./errors";
 
-// Throw this from the processor to dead-letter immediately (a permanent 4xx),
-// instead of retrying with backoff.
-export class PermanentError extends Error {}
+export { PermanentError };
 
 export const DEFAULT_MAX_ATTEMPTS = 8;
 const BACKOFF_BASE_MS = 1000;

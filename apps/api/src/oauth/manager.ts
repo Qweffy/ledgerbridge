@@ -17,8 +17,8 @@ export class NoTokensError extends Error {}
 // Return a valid access token for a realm, refreshing (and persisting) it first
 // if it's within the skew window of expiring.
 //
-// Note: a production multi-worker deployment should guard the refresh with a
-// Postgres advisory lock so two workers don't refresh concurrently. The neon-http
+// A production multi-worker deployment should guard the refresh with a Postgres
+// advisory lock so two workers don't refresh concurrently. The neon-http
 // driver can't hold a session lock across statements, so that lands with the
 // transactional pool a long-running worker uses; for the single dev process this is fine.
 export async function getValidAccessToken(
