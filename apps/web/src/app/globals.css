@@ -281,6 +281,11 @@
   --blue-tint:    oklch(0.625 0.175 255 / 0.14);
   --blue-tint-hi: oklch(0.625 0.175 255 / 0.24);
   --accent-tint:  var(--blue-tint);
+  /* landing icon-box tints — soft status fills (adapt to light via the *-fill aliases) */
+  --green-tint:  var(--status-synced-fill);
+  --amber-tint:  var(--status-conflict-fill);
+  --red-tint:    var(--status-failed-fill);
+  --violet-tint: var(--status-replayed-fill);
 
   /* status — bundle uses *-fill for the soft tint, *-solid for the dot */
   --status-synced-fg: var(--color-emerald-400);  --status-synced-fill: var(--status-done-bg);     --status-synced-solid: var(--color-emerald-500);
@@ -537,3 +542,31 @@
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* 7. Landing page: layout rails + section animations                  */
+/* ------------------------------------------------------------------ */
+.lb-wrap { max-width: var(--landing-max); margin: 0 auto; padding: 0 24px; }
+.lb-nav-links { display: flex; gap: 2px; }
+.lb-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.lb-grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.lb-stack { display: grid; grid-template-columns: 1fr auto 1fr; align-items: stretch; gap: 0; }
+.lb-arch { display: grid; grid-template-columns: 0.9fr auto 1.5fr auto 0.9fr; align-items: stretch; gap: 10px; }
+.lb-foot { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; gap: 28px; }
+.lb-hide-sm { display: initial; }
+
+@media (max-width: 900px) {
+  .lb-nav-links { display: none; }
+  .lb-grid4 { grid-template-columns: 1fr 1fr; }
+  .lb-stack { grid-template-columns: 1fr; }
+  .lb-arch { grid-template-columns: 1fr; }
+  .lb-arch .lb-arch-bridge { transform: rotate(90deg); justify-self: center; padding: 6px 0; }
+  .lb-foot { grid-template-columns: 1fr 1fr; gap: 24px; }
+  .lb-hide-sm { display: none; }
+}
+@media (max-width: 560px) {
+  .lb-grid2, .lb-grid4, .lb-foot { grid-template-columns: 1fr; }
+}
+
+@keyframes lb-travel { 0% { left: 4%; opacity: 0; } 18% { opacity: 1; } 82% { opacity: 1; } 100% { left: 96%; opacity: 0; } }
+@keyframes lb-dash { to { stroke-dashoffset: -16; } }
