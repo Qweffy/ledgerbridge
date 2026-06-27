@@ -55,10 +55,11 @@ function mock<T>(producer: () => T): Promise<T> {
 }
 
 async function real(path: string, init?: RequestInit): Promise<unknown> {
-  const res = await fetch((API_BASE ?? "").replace(/\/$/, "") + path, {
-    headers: { "content-type": "application/json" },
-    ...init,
-  });
+  // Only declare a JSON content-type when we actually send a body — a bodyless POST
+  // (replay, demo.*) with content-type:application/json makes Fastify 400 on the
+  // empty body, and it keeps GETs preflight-free.
+  const headers = init?.body != null ? { "content-type": "application/json" } : undefined;
+  const res = await fetch((API_BASE ?? "").replace(/\/$/, "") + path, { ...init, headers });
   if (!res.ok) throw new ApiError(`${init?.method ?? "GET"} ${path} → ${res.status}`);
   return res.json();
 }
