@@ -59,7 +59,7 @@ Beyond the two argued inline — **flag-and-hold vs auto-LWW** (unsynchronised c
 | exists both, no link | reconciler matches (number+amount+date) → create link / flag |
 
 ## Testing strategy
-**66 tests** (Vitest) run against an **in-process Postgres (PGlite)** with the real migrations applied and a **fake QBO boundary** (`createFakeQbo` records what the processor asked it to do), so they exercise the production schema + the real worker/reconciler logic with no Docker or network. What they prove:
+**72 tests** (Vitest) run against an **in-process Postgres (PGlite)** with the real migrations applied and a **fake QBO boundary** (`createFakeQbo` records what the processor asked it to do), so they exercise the production schema + the real worker/reconciler logic with no Docker or network. What they prove:
 - **Idempotency** — a re-delivered webhook is dropped (UNIQUE `event_id`); an unchanged re-apply is short-circuited (no QBO call).
 - **The money shot** — an invoice already in QBO with no link (the prior write timed out *after* landing) is **adopted and updated, never duplicated**.
 - **Conflict** — both sides editing the amount flags `conflict` and holds both directions; disjoint edits don't; identical edits converge; both resolve directions apply the winner.

@@ -167,7 +167,7 @@ npm run db:migrate  # apply migrations
 
 ## Tests
 
-66 tests run against an in-process Postgres (PGlite) with the real migrations applied and a fake QBO
+72 tests run against an in-process Postgres (PGlite) with the real migrations applied and a fake QBO
 boundary, so they exercise the production schema — idempotency, the outbox, conflict detection, loop
 prevention — without Docker or a remote database. Every spec edge case is covered: duplicate webhook
 (UNIQUE `event_id`), out-of-order (refetch beats a stale payload), edited-in-both → conflict, delete→void
@@ -192,8 +192,9 @@ for the 10 reproducible end-to-end flows.
 - **The "internal" system is simulated.** There's no real upstream, so `apps/api` ships a minimal
   Postgres-backed invoicing service (`/internal/*`) that emits HMAC-signed change webhooks — enough to
   demonstrate genuine two-way sync.
-- **One connected sandbox realm, no auth on the admin API.** Multi-tenant (per-realm isolation) and an
-  auth layer on the dashboard/admin API are out of scope; the data model already carries `realm_id`.
+- **One connected sandbox realm; admin auth is opt-in.** Multi-tenant (per-realm isolation) is out of
+  scope (the data model already carries `realm_id`); the admin surface has an optional `ADMIN_API_TOKEN`
+  bearer guard, left unset in the demo so reviewers can drive it (see [`SECURITY.md`](SECURITY.md)).
 - **Amount is the only field that round-trips both ways**, so it's the conflict surface; `customerName` /
   `balanceCents` are internal-only. **Reverse Payment sync (QBO → internal)** is deliberately deferred (a
   documented asymmetry). Deletes map to QBO **voids** (accounting keeps a zeroed record, not a hard delete).
@@ -207,6 +208,9 @@ real upstream replacing the simulated internal system.
 
 ## Security
 
+See [`SECURITY.md`](SECURITY.md) for the full threat model, the independent audit findings, and the
+production-hardening roadmap. In brief:
+
 - Secrets (the database URL, QBO keys) live only in `apps/api/.env.local`, which is gitignored;
   the repo ships empty `.env.example` placeholders.
 - The internal→bridge webhook is authenticated with an HMAC-SHA256 signature compared in constant
@@ -217,6 +221,6 @@ real upstream replacing the simulated internal system.
 - Production hardening, deliberately out of scope for one connected sandbox: per-sender webhook
   keys with a key id and rotation, and a dedicated OAuth state secret rather than one derived from
   the client secret.
-- The admin/observability API is **unauthenticated** in this sandbox build (it's a demo surface for
-  the dashboard). In production it would sit behind a bearer token / session — the route layer is the
-  single place to add it.
+- The admin/internal/demo API sits behind an **optional bearer guard** (`ADMIN_API_TOKEN`, constant-time
+  compare). It's left unset in the sandbox demo so the dashboard can drive the engine; setting one env var
+  locks the whole surface down. The public OAuth + webhook routes are excluded (they self-authenticate).
