@@ -2,6 +2,8 @@ import { config } from "dotenv";
 import type { FastifyInstance } from "fastify";
 import type { QboConfig } from "./config";
 import type { ResolveDeps } from "./bridge/resolve";
+import type { ReconcileDeps } from "./bridge/reconcile";
+import type { DemoDeps, FaultBox } from "./demo/routes";
 
 config({ path: ".env.local" });
 
@@ -12,7 +14,7 @@ const { loadQboConfig } = await import("./config");
 const { createWebhookSink, noopSink } = await import("./internal/sink");
 const { getInvoice, getPayment, listInvoices, updateInvoice, deleteInvoice } = await import("./internal/service");
 const { createQboInvoiceOps, createQboPaymentOps } = await import("./bridge/qbo-ops");
-const { startWorker } = await import("./bridge/worker");
+const { startWorker, DEFAULT_MAX_ATTEMPTS } = await import("./bridge/worker");
 const { startReconciler } = await import("./bridge/reconcile");
 
 const PORT = Number(process.env.PORT ?? 3001);
@@ -24,6 +26,10 @@ const sink =
   target && internalSecret
     ? createWebhookSink({ url: target, secret: internalSecret })
     : noopSink;
+
+// The /demo/* control surface — create-invoice is internal-only (always available);
+// the QBO-touching actions are wired below only when QBO is configured.
+const demoDeps: DemoDeps = { db, sink };
 
 let qbo: { cfg: QboConfig } | undefined;
 try {
@@ -64,6 +70,22 @@ if (qbo && realmId && customerRef && itemRef) {
     refetchInternal: (id) => getInvoice(db, id),
     defaults: { customerRef, itemRef },
   };
+  // Shared by the background reconciler and the /demo/reconcile endpoint.
+  const reconcileDeps: ReconcileDeps = {
+    qbo: ops,
+    refetchInternal: (id) => getInvoice(db, id),
+    listInternalInvoices: () => listInvoices(db),
+    realmId,
+  };
+  // One-shot fault budget the demo arms; the worker's processor drains it.
+  const faultBox: FaultBox = { remaining: 0 };
+  demoDeps.qbo = {
+    invoiceOps: ops,
+    defaults: { customerRef, itemRef },
+    reconcile: reconcileDeps,
+    faultBox,
+    maxAttempts: DEFAULT_MAX_ATTEMPTS,
+  };
   startBackground = (app) => {
     worker = startWorker(db, {
       processor: {
@@ -77,18 +99,19 @@ if (qbo && realmId && customerRef && itemRef) {
           qboPayments: paymentOps,
           defaults: { customerRef },
         },
+        // Demo: throw before an outbound QBO write while the fault budget is armed.
+        faultInjector: () => {
+          if (faultBox.remaining > 0) {
+            faultBox.remaining -= 1;
+            throw new Error("injected fault (demo)");
+          }
+        },
       },
       pollIntervalMs: 1000,
       onError: (err) => app.log.error(err),
     });
     // Periodic safety net: match unlinked invoices + recover drift from dropped webhooks.
-    reconciler = startReconciler(db, {
-      qbo: ops,
-      refetchInternal: (id) => getInvoice(db, id),
-      listInternalInvoices: () => listInvoices(db),
-      realmId,
-      onError: (err) => app.log.error(err),
-    });
+    reconciler = startReconciler(db, { ...reconcileDeps, onError: (err) => app.log.error(err) });
     app.log.info("sync worker + reconciler started");
   };
 }
@@ -99,6 +122,7 @@ const app = buildServer({
   qbo,
   bridge: internalSecret ? { secret: internalSecret, qboVerifierToken } : undefined,
   resolve: resolveDeps,
+  demo: demoDeps,
 });
 
 if (startBackground) startBackground(app);

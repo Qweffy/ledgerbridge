@@ -21,6 +21,9 @@ export interface ProcessorDeps {
   applyToInternal?: InternalApply;
   // Payment sync (internal payment → QBO Payment). Optional.
   payments?: PaymentProcessorDeps;
+  // Demo/test seam: when armed, throws before an outbound QBO write so a fault can
+  // be exercised through to retry → dead-letter. Inert (undefined) in normal runs.
+  faultInjector?: () => void;
   now?: () => Date;
 }
 
@@ -144,6 +147,7 @@ async function processInternalToQbo(
   }
 
   // Apply: create / adopt / update QBO.
+  deps.faultInjector?.();
   const body = mapInvoiceToQbo(invoice, deps.defaults);
   let qboId: string;
   let qboVersion: number;
