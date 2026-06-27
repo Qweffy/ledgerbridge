@@ -14,8 +14,8 @@ Two ideas carry the whole design:
 
 ## Live demo
 
-- **Dashboard** — `LIVE_WEB_URL` *(Vercel; added once deployed)*
-- **API** — `LIVE_API_URL` *(Railway; Fastify + the sync worker & reconciler)*
+- **Dashboard** — https://ledgerbridge-web.vercel.app *(Vercel)*
+- **API** — https://ledgerbridgeapi-production.up.railway.app *(Railway; Fastify + the sync worker & reconciler)* — health at [`/health`](https://ledgerbridgeapi-production.up.railway.app/health), live counts at [`/status`](https://ledgerbridgeapi-production.up.railway.app/status)
 
 Open the dashboard's **Demo** panel to drive the whole pipeline against a real QBO sandbox (create → sync →
 edit-both → conflict → resolve → inject-fault → dead-letter → replay → reconcile). If the API is
