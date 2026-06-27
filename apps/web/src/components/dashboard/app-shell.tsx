@@ -8,6 +8,7 @@ import { useState, type ReactNode } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { api } from "@/lib/api/client";
 import { useApi } from "@/lib/api/hooks";
+import { DemoSheet } from "./demo";
 import { Icon } from "./icon";
 import { ToastHost } from "./overlays";
 
@@ -178,7 +179,7 @@ function Sidebar({ active, conflictCount }: { active: string; conflictCount: num
   );
 }
 
-function TopBar({ crumbs }: { crumbs: Crumb[] }) {
+function TopBar({ crumbs, onDemo }: { crumbs: Crumb[]; onDemo: () => void }) {
   const all: Crumb[] = [{ label: "LedgerBridge" }, ...crumbs];
   return (
     <header style={{ height: "var(--topbar-h)", flexShrink: 0, display: "flex", alignItems: "center", gap: 12, padding: "0 18px", borderBottom: "1px solid var(--border-subtle)", background: "color-mix(in oklch, var(--surface-canvas) 80%, transparent)", backdropFilter: "blur(8px)", position: "sticky", top: 0, zIndex: 5 }}>
@@ -201,13 +202,15 @@ function TopBar({ crumbs }: { crumbs: Crumb[] }) {
         <span style={{ font: "var(--text-2xs)/1 var(--font-mono)", border: "1px solid var(--border-default)", borderRadius: 4, padding: "2px 5px" }}>⌘K</span>
       </div>
       <ConnectionStatus />
-      <Link
-        href="/demo"
-        style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, padding: "0 11px", background: "var(--surface-raised)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-md)", color: "var(--text-primary)", font: "var(--fw-medium) var(--text-sm)/1 var(--font-sans)", textDecoration: "none", boxShadow: "var(--ring-inset-top)" }}
+      <button
+        type="button"
+        onClick={onDemo}
+        title="Open demo controls"
+        style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, padding: "0 11px", background: "var(--surface-raised)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-md)", color: "var(--text-primary)", font: "var(--fw-medium) var(--text-sm)/1 var(--font-sans)", cursor: "pointer", boxShadow: "var(--ring-inset-top)" }}
       >
         <Icon name="FlaskConical" size={15} color="var(--accent)" />
         Demo
-      </Link>
+      </button>
       <ThemeToggle />
       <Avatar name="Dana Okafor" size={26} />
     </header>
@@ -218,13 +221,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { active, crumbs } = derive(pathname);
   const { data: status } = useApi(() => api.getStatus(), [], { pollMs: 5000 });
+  const [demoOpen, setDemoOpen] = useState(false);
   return (
     <div style={{ display: "flex", height: "100vh", minHeight: 0, background: "var(--surface-canvas)" }}>
       <Sidebar active={active} conflictCount={status?.conflictCount ?? null} />
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100%" }}>
-        <TopBar crumbs={crumbs} />
+        <TopBar crumbs={crumbs} onDemo={() => setDemoOpen(true)} />
         <main style={{ flex: 1, minHeight: 0, overflow: "auto" }}>{children}</main>
       </div>
+      <DemoSheet open={demoOpen} onClose={() => setDemoOpen(false)} />
       <ToastHost />
     </div>
   );
