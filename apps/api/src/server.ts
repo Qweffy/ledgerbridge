@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import cors from "@fastify/cors";
 import type { Database } from "../db/types";
 import type { QboConfig } from "./config";
 import type { ChangeSink } from "./internal/sink";
@@ -26,6 +27,15 @@ export interface ServerDeps {
 // database or Intuit.
 export function buildServer(deps?: ServerDeps): FastifyInstance {
   const app = Fastify({ logger: true });
+
+  // The dashboard fetches cross-origin (web :3000 → api :3001). Origin is
+  // env-driven so deploy (Vercel domain) needs no code change; comma-separate for
+  // multiple. The client sends content-type on every request, so GETs preflight too.
+  void app.register(cors, {
+    origin: (process.env.WEB_ORIGIN ?? "http://localhost:3000").split(","),
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["content-type"],
+  });
 
   app.get("/health", async () => ({ status: "ok" as const }));
 
