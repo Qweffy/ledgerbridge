@@ -130,6 +130,7 @@ describe("oauth routes", () => {
     h = await createTestDb();
   });
   afterEach(async () => {
+    delete process.env.QBO_REALM_ID;
     await h.close();
   });
 
@@ -162,6 +163,26 @@ describe("oauth routes", () => {
       url: "/oauth/callback?code=abc&state=bogus&realmId=9130347",
     });
     expect(cb.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it("rejects a callback whose realmId is not the configured realm", async () => {
+    process.env.QBO_REALM_ID = "9130347";
+    const { fetchImpl } = tokenFetch(TOKEN_RESP);
+    const app = buildServer({ db: h.db, sink: noopSink, qbo: { cfg, fetchImpl } });
+
+    const connect = await app.inject({ method: "GET", url: "/oauth/connect" });
+    const state = new URL(String(connect.headers.location ?? "")).searchParams.get("state") ?? "";
+
+    const cb = await app.inject({
+      method: "GET",
+      url: `/oauth/callback?code=abc&state=${state}&realmId=9999999`,
+    });
+    expect(cb.statusCode).toBe(400);
+    expect(cb.json()).toMatchObject({ error: "unexpected realmId" });
+
+    // No tokens were filed under the attacker-supplied realm.
+    expect(await getTokenRow(h.db, "9999999")).toBeUndefined();
     await app.close();
   });
 });

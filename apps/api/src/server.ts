@@ -9,6 +9,7 @@ import { registerBridgeIngest } from "./bridge/ingest";
 import { registerQboWebhook } from "./bridge/qbo-ingest";
 import { registerObservabilityRoutes } from "./observability/routes";
 import { registerDemoRoutes, type DemoDeps } from "./demo/routes";
+import { makeAdminGuard } from "./auth";
 import type { ResolveDeps } from "./bridge/resolve";
 
 export interface ServerDeps {
@@ -34,18 +35,21 @@ export function buildServer(deps?: ServerDeps): FastifyInstance {
   void app.register(cors, {
     origin: (process.env.WEB_ORIGIN ?? "http://localhost:3000").split(","),
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["content-type"],
+    allowedHeaders: ["content-type", "authorization"],
   });
 
   app.get("/health", async () => ({ status: "ok" as const }));
 
   if (deps) {
-    registerInternalRoutes(app, deps);
+    // Public, self-authenticating routes: the OAuth redirect/callback and the
+    // HMAC-verified webhook receivers. These must stay reachable without a bearer token.
     if (deps.qbo) {
       registerOAuthRoutes(app, {
         db: deps.db,
         cfg: deps.qbo.cfg,
         fetchImpl: deps.qbo.fetchImpl,
+        // Single-tenant: tokens may only be filed under the configured realm.
+        expectedRealmId: process.env.QBO_REALM_ID,
       });
     }
     if (deps.bridge) {
@@ -54,8 +58,18 @@ export function buildServer(deps?: ServerDeps): FastifyInstance {
         registerQboWebhook(app, { db: deps.db, verifierToken: deps.bridge.qboVerifierToken });
       }
     }
-    registerObservabilityRoutes(app, { db: deps.db, resolve: deps.resolve });
-    if (deps.demo) registerDemoRoutes(app, deps.demo);
+
+    // The admin surface (internal API + observability + demo control) in one
+    // encapsulated scope, optionally gated by ADMIN_API_TOKEN — a no-op when unset
+    // so the sandbox demo stays open (CORS + the OAuth/webhook routes are inherited
+    // from the parent, so they're unaffected).
+    const adminGuard = makeAdminGuard();
+    void app.register(async (admin) => {
+      if (adminGuard) admin.addHook("onRequest", adminGuard);
+      registerInternalRoutes(admin, deps);
+      registerObservabilityRoutes(admin, { db: deps.db, resolve: deps.resolve });
+      if (deps.demo) registerDemoRoutes(admin, deps.demo);
+    });
   }
 
   return app;

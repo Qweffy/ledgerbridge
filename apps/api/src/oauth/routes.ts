@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import type { Database } from "../../db/types";
 import type { QboConfig } from "../config";
 import { buildAuthorizeUrl, exchangeCode } from "./intuit";
@@ -9,7 +10,18 @@ export interface OAuthRouteDeps {
   db: Database;
   cfg: QboConfig;
   fetchImpl?: typeof fetch;
+  // The single realm this deployment may connect. When set, the callback rejects a
+  // realmId that doesn't match, so tokens can't be filed under an attacker-chosen realm
+  // (the signed state carries no realm binding of its own).
+  expectedRealmId?: string;
 }
+
+const callbackQuery = z.object({
+  code: z.string().min(1).optional(),
+  state: z.string().min(1).optional(),
+  realmId: z.string().min(1).optional(),
+  error: z.string().optional(),
+});
 
 const STATE_TTL_MS = 10 * 60 * 1000;
 
@@ -54,18 +66,18 @@ export function registerOAuthRoutes(app: FastifyInstance, deps: OAuthRouteDeps):
   });
 
   app.get("/oauth/callback", async (req, reply) => {
-    const query = req.query as {
-      code?: string;
-      state?: string;
-      realmId?: string;
-      error?: string;
-    };
+    const parsed = callbackQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const query = parsed.data;
     if (query.error) return reply.code(400).send({ error: query.error });
     if (!query.code || !query.state || !query.realmId) {
       return reply.code(400).send({ error: "missing code, state or realmId" });
     }
     if (!verifyState(query.state, stateKey)) {
       return reply.code(400).send({ error: "invalid or expired state" });
+    }
+    if (deps.expectedRealmId && query.realmId !== deps.expectedRealmId) {
+      return reply.code(400).send({ error: "unexpected realmId" });
     }
 
     const tokens = await exchangeCode(deps.cfg, query.code, fetchImpl);
