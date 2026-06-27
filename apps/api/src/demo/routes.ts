@@ -77,10 +77,15 @@ export function registerDemoRoutes(app: FastifyInstance, demo: DemoDeps): void {
     const base = link.lastSyncedSnapshot?.amountCents ?? inv.amountCents;
     const internalAmount = base + 5_000;
     const qboAmount = base + 9_000;
-    await updateInvoice(db, sink, inv.id, { amountCents: internalAmount });
+    // Order matters: write QBO FIRST (advancing its SyncToken past last-synced), then
+    // emit the internal change. The worker must not see the internal event until QBO
+    // has already diverged — otherwise it claims the event while QBO still looks
+    // unchanged, applies a one-sided write, and collides on the stale SyncToken instead
+    // of detecting the both-changed conflict.
     const qboState = await demo.qbo.invoiceOps.read(link.qboId);
     const qboBody = mapInvoiceToQbo({ ...inv, amountCents: qboAmount }, demo.qbo.defaults);
     await demo.qbo.invoiceOps.update({ ...qboBody, Id: qboState.Id, SyncToken: qboState.SyncToken });
+    await updateInvoice(db, sink, inv.id, { amountCents: internalAmount });
     return { ok: true, linkId: link.id, internalAmountCents: internalAmount, qboAmountCents: qboAmount };
   });
 
