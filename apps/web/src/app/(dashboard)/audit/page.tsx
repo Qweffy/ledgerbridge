@@ -49,10 +49,12 @@ function ResultTag({ result }: { result: "ok" | "error" }) {
   );
 }
 
-// scalar value renderer — a system identity gets a badge, else mono
+// value renderer — a system identity gets a badge, an object/array is pretty-printed
+// JSON (snapshots + the reconciler heartbeat carry objects), else mono scalar.
 function Val({ value, accent }: { value: unknown; accent?: string }) {
   if (value == null || value === "") return <span style={{ font: "var(--text-sm)/1 var(--font-mono)", color: "var(--text-faint)", fontStyle: "italic" }}>none</span>;
   if (value === "internal" || value === "qbo") return <SystemBadge source={value} size="md" />;
+  if (typeof value === "object") return <pre style={{ margin: 0, font: "var(--text-xs)/1.5 var(--font-mono)", color: accent ?? "var(--text-primary)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 220, overflow: "auto" }}>{JSON.stringify(value, null, 2)}</pre>;
   return <span style={{ font: "var(--fw-medium) var(--text-md)/1.2 var(--font-mono)", color: accent ?? "var(--text-primary)", fontVariantNumeric: "tabular-nums" }}>{String(value)}</span>;
 }
 
