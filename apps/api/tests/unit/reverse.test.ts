@@ -142,6 +142,26 @@ describe("bridge — QBO → internal reverse sync + loop prevention", () => {
     const skips = (await h.db.select().from(auditLog)).filter((a) => a.action === "skip");
     expect(skips.some((s) => s.error?.includes("no link"))).toBe(true);
   });
+
+  it("a re-delivered (out-of-order) QBO webhook for an already-applied change is dropped — no double-apply", async () => {
+    const { id, qboId } = await syncNewInvoice(10000);
+
+    fake.externalEdit(qboId, { totalCents: 25000 });
+    await enqueueQboEvent(h.db, { qboId, lastUpdated: "2026-06-26T10:00:00Z", operation: "Update", realmId: "r1" });
+    await processOne(h.db, deps);
+    const applied = await getInvoice(h.db, id);
+    expect(applied?.amountCents).toBe(25000);
+
+    // The same change is delivered again (duplicate / out-of-order). Refetch sees the
+    // current SyncToken == the version we recorded → echo/stale, dropped. No re-apply.
+    await enqueueQboEvent(h.db, { qboId, lastUpdated: "2026-06-26T10:05:00Z", operation: "Update", realmId: "r1" });
+    await processOne(h.db, deps);
+    const again = await getInvoice(h.db, id);
+    expect(again?.amountCents).toBe(25000);
+    expect(again?.version).toBe(applied?.version); // not bumped a second time
+    const skips = (await h.db.select().from(auditLog)).filter((a) => a.action === "skip");
+    expect(skips.some((s) => s.error?.includes("echo"))).toBe(true);
+  });
 });
 
 describe("bridge — QBO webhook ingest", () => {

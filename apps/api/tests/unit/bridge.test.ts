@@ -17,6 +17,7 @@ import {
 import { enqueueInternalEvent } from "../../src/bridge/ingest";
 import { getLinkByInternalId } from "../../src/bridge/links";
 import { processOne, type WorkerDeps } from "../../src/bridge/worker";
+import { PermanentError } from "../../src/bridge/errors";
 import { buildServer } from "../../src/server";
 import { createFakeQbo } from "../helpers/fake-qbo";
 
@@ -264,5 +265,45 @@ describe("bridge — internal → QBO sync core", () => {
     });
     expect(junkOk.statusCode).toBe(400);
     await app.close();
+  });
+
+  it("duplicate webhook delivery is deduped at the DB (UNIQUE event_id) — one outbox row", async () => {
+    const { sink, events } = captureSink();
+    await createInvoice(h.db, sink, { customerName: "Acme", amountCents: 1000 });
+    const event = first(events);
+    expect(await enqueueInternalEvent(h.db, event)).toBe("enqueued");
+    expect(await enqueueInternalEvent(h.db, event)).toBe("duplicate");
+    expect(await enqueueInternalEvent(h.db, event)).toBe("duplicate");
+    const rows = await h.db.select().from(syncEvents).where(eq(syncEvents.eventId, event.eventId));
+    expect(rows.length).toBe(1); // exactly one row, however many times it's delivered
+  });
+
+  it("out-of-order: a stale create event applies the refetched current amount, not the payload's", async () => {
+    const { sink, events } = captureSink();
+    const inv = await createInvoice(h.db, sink, { customerName: "Acme", amountCents: 1000 });
+    // the invoice advances in the DB before its now-stale create event is processed
+    await updateInvoice(h.db, sink, inv.id, { amountCents: 5000 });
+    await enqueueInternalEvent(h.db, first(events)); // the OLD create event (1000)
+    await processOne(h.db, deps);
+    // refetch-don't-trust-the-payload: QBO is created with the current 5000, not 1000
+    const qboId = fake.byDoc.get(inv.id);
+    expect(fake.byId.get(qboId ?? "")?.totalCents).toBe(5000);
+  });
+
+  it("a permanent QBO 4xx dead-letters on the first attempt, without burning the retry budget", async () => {
+    const { sink, events } = captureSink();
+    const inv = await createInvoice(h.db, sink, { customerName: "Acme", amountCents: 1000 });
+    await enqueueInternalEvent(h.db, first(events));
+    const permanentDeps: WorkerDeps = {
+      ...deps,
+      processor: {
+        ...deps.processor,
+        qbo: { ...fake.ops, create: () => Promise.reject(new PermanentError("QBO POST /invoice → 400")) },
+      },
+    };
+    await processOne(h.db, permanentDeps);
+    const [ev] = await h.db.select().from(syncEvents).where(eq(syncEvents.entityExternalId, inv.id));
+    expect(ev?.status).toBe("dead"); // dead immediately
+    expect(ev?.attempts).toBe(1); // not 8 — a permanent error skips the backoff schedule
   });
 });
