@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+.git
+.next
+**/.next
+dist
+**/dist
+.env
+.env.*
+**/.env
+**/.env.*
+.claude
+**/*.log
+.DS_Store
