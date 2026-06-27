@@ -37,6 +37,9 @@ Built and tested so far:
 - **Sync core (internal → QBO)** — signed-webhook ingest → durable outbox **worker** with a
   `FOR UPDATE SKIP LOCKED` lease → **idempotent apply** (check-by-external-id before create) →
   `links` + `audit_log`, with exponential-backoff retries, dead-lettering, and graceful shutdown.
+  The worker polls, and a Postgres **`LISTEN/NOTIFY`** trigger wakes it sub-second on a new event
+  (polling stays the fallback). Optional **OpenTelemetry** tracing (`OTEL_ENABLED`) spans the pipeline
+  (`sync.process_event` → `qbo.request`) on top of the always-on correlation-id logging.
 - **Reverse sync (QBO → internal) + loop prevention** — a `/webhooks/qbo` receiver (Intuit HMAC
   verify + Change-Data-Capture parse) feeds the same outbox; the reverse processor refetches the QBO
   invoice and applies it to the internal system. Two complementary guards keep the two directions
@@ -167,7 +170,7 @@ npm run db:migrate  # apply migrations
 
 ## Tests
 
-72 tests run against an in-process Postgres (PGlite) with the real migrations applied and a fake QBO
+79 tests run against an in-process Postgres (PGlite) with the real migrations applied and a fake QBO
 boundary, so they exercise the production schema — idempotency, the outbox, conflict detection, loop
 prevention — without Docker or a remote database. Every spec edge case is covered: duplicate webhook
 (UNIQUE `event_id`), out-of-order (refetch beats a stale payload), edited-in-both → conflict, delete→void
