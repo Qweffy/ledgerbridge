@@ -4,6 +4,7 @@ import type { Database } from "../../db/types";
 import { writeAudit } from "./audit";
 import { processEvent, type ProcessorDeps, type SyncEventRow } from "./processor";
 import { PermanentError } from "./errors";
+import { withSpan } from "../telemetry";
 
 export { PermanentError };
 
@@ -66,7 +67,17 @@ export async function processOne(
   if (!event) return "idle";
 
   try {
-    await processEvent(db, event, deps.processor);
+    await withSpan(
+      "sync.process_event",
+      {
+        "event.id": event.eventId,
+        "entity.type": event.entityType,
+        "entity.external_id": event.entityExternalId,
+        "correlation.id": event.correlationId ?? undefined,
+        "event.attempt": event.attempts,
+      },
+      () => processEvent(db, event, deps.processor),
+    );
     await db
       .update(syncEvents)
       .set({ status: "done", processedAt: now, lockedAt: null, lockedBy: null })
@@ -113,10 +124,14 @@ export async function processOne(
 
 export interface RunningWorker {
   stop: () => Promise<void>;
+  // Cut the idle wait short — called by the LISTEN/NOTIFY listener when a new event is
+  // enqueued, so it's picked up immediately instead of waiting out the poll interval.
+  wake: () => void;
 }
 
 // Long-running poll loop with graceful shutdown — stop() lets the in-flight event
-// finish before resolving.
+// finish before resolving. Polling is the correctness floor; an optional wake() only
+// shortens the idle latency between an enqueue and its pickup.
 export function startWorker(
   db: Database,
   deps: WorkerDeps & { pollIntervalMs?: number; onError?: (err: unknown) => void },
@@ -124,16 +139,34 @@ export function startWorker(
   const pollIntervalMs = deps.pollIntervalMs ?? 1000;
   let stopped = false;
   let current: Promise<unknown> = Promise.resolve();
+  let wakeIdle: (() => void) | null = null;
+
+  // Resolve on the poll timeout OR an external wake, whichever fires first.
+  function idle(): Promise<void> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(finish, pollIntervalMs);
+      function finish() {
+        clearTimeout(timer);
+        wakeIdle = null;
+        resolve();
+      }
+      wakeIdle = finish;
+    });
+  }
+
+  function wake(): void {
+    wakeIdle?.();
+  }
 
   async function loop(): Promise<void> {
     while (!stopped) {
       try {
         current = processOne(db, deps);
         const result = await current;
-        if (result === "idle") await sleep(pollIntervalMs);
+        if (result === "idle") await idle();
       } catch (err) {
         deps.onError?.(err);
-        await sleep(pollIntervalMs);
+        await idle();
       }
     }
   }
@@ -142,11 +175,9 @@ export function startWorker(
   return {
     async stop() {
       stopped = true;
+      wake(); // break out of an idle wait so shutdown doesn't block on the poll timer
       await current;
     },
+    wake,
   };
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

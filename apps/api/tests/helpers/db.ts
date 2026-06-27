@@ -8,6 +8,8 @@ const MIGRATIONS_DIR = fileURLToPath(new URL("../../db/migrations", import.meta.
 
 export interface TestDb {
   db: Database;
+  // The raw PGlite client — exposed so notification/trigger tests can LISTEN.
+  client: PGlite;
   close: () => Promise<void>;
 }
 
@@ -22,5 +24,5 @@ export async function createTestDb(): Promise<TestDb> {
     await client.exec(readFileSync(`${MIGRATIONS_DIR}/${file}`, "utf8"));
   }
   const db = drizzle(client, { schema: fullSchema }) as unknown as Database;
-  return { db, close: () => client.close() };
+  return { db, client, close: () => client.close() };
 }

@@ -7,6 +7,10 @@ import type { DemoDeps, FaultBox } from "./demo/routes";
 
 config({ path: ".env.local" });
 
+// Start tracing before anything else so spans have a provider (no-op unless OTEL_ENABLED).
+const { startTelemetry } = await import("./telemetry");
+await startTelemetry();
+
 // Imports are dynamic so the env is loaded before db/index reads DATABASE_URL.
 const { db } = await import("../db");
 const { buildServer } = await import("./server");
@@ -16,6 +20,7 @@ const { getInvoice, getPayment, listInvoices, updateInvoice, deleteInvoice } = a
 const { createQboInvoiceOps, createQboPaymentOps } = await import("./bridge/qbo-ops");
 const { startWorker, DEFAULT_MAX_ATTEMPTS } = await import("./bridge/worker");
 const { startReconciler } = await import("./bridge/reconcile");
+const { startNotifyListener, deriveUnpooledUrl } = await import("./bridge/notify");
 
 const PORT = Number(process.env.PORT ?? 3001);
 
@@ -51,8 +56,9 @@ const customerRef = process.env.QBO_DEFAULT_CUSTOMER;
 const itemRef = process.env.QBO_DEFAULT_ITEM;
 
 let resolveDeps: ResolveDeps | undefined;
-let worker: { stop: () => Promise<void> } | undefined;
+let worker: { stop: () => Promise<void>; wake: () => void } | undefined;
 let reconciler: { stop: () => Promise<void> } | undefined;
+let notifyListener: { stop: () => Promise<void> } | undefined;
 let startBackground: ((app: FastifyInstance) => void) | undefined;
 
 if (qbo && realmId && customerRef && itemRef) {
@@ -112,6 +118,22 @@ if (qbo && realmId && customerRef && itemRef) {
     });
     // Periodic safety net: match unlinked invoices + recover drift from dropped webhooks.
     reconciler = startReconciler(db, { ...reconcileDeps, onError: (err) => app.log.error(err) });
+    // Instant wake on enqueue (latency win over the 1s poll), best-effort: a LISTEN
+    // connection that can't be established just leaves the worker polling. Neon's
+    // pooled URL can't LISTEN, so use the unpooled host (explicit env or derived).
+    const unpooledUrl = process.env.DATABASE_URL_UNPOOLED ?? deriveUnpooledUrl(process.env.DATABASE_URL ?? "");
+    if (unpooledUrl) {
+      notifyListener = startNotifyListener({
+        url: unpooledUrl,
+        onWake: () => worker?.wake(),
+        onReady: () => app.log.info("listening for sync_events (instant wake)"),
+        onError: (err) =>
+          app.log.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            "sync_events listener error — falling back to polling",
+          ),
+      });
+    }
     app.log.info("sync worker + reconciler started");
   };
 }
@@ -130,6 +152,7 @@ else app.log.warn("sync worker not started (missing QBO realm/defaults)");
 
 async function shutdown(): Promise<void> {
   app.log.info("shutting down");
+  await notifyListener?.stop();
   await reconciler?.stop();
   await worker?.stop();
   await app.close();

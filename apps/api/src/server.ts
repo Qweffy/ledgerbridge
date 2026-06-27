@@ -10,6 +10,7 @@ import { registerQboWebhook } from "./bridge/qbo-ingest";
 import { registerObservabilityRoutes } from "./observability/routes";
 import { registerDemoRoutes, type DemoDeps } from "./demo/routes";
 import { makeAdminGuard } from "./auth";
+import { registerHttpTracing } from "./telemetry";
 import type { ResolveDeps } from "./bridge/resolve";
 
 export interface ServerDeps {
@@ -37,6 +38,9 @@ export function buildServer(deps?: ServerDeps): FastifyInstance {
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["content-type", "authorization"],
   });
+
+  // One OpenTelemetry span per request (no-op until OTEL_ENABLED registers a provider).
+  registerHttpTracing(app);
 
   app.get("/health", async () => ({ status: "ok" as const }));
 
