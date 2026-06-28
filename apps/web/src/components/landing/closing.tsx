@@ -80,10 +80,11 @@ export function CTA() {
   );
 }
 
+const API_URL = "https://ledgerbridgeapi-production.up.railway.app";
 const FOOTER_COLS: [string, [string, string][]][] = [
   ["Product", [["Live sync", "#live"], ["Architecture", "#architecture"], ["Reliability", "#reliability"], ["Dashboard", "/dashboard"]]],
-  ["Developers", [["Docs", "#"], ["API reference", "#"], ["Webhooks", "#"], ["GitHub", GITHUB_URL]]],
-  ["Company", [["About", "#"], ["Security", "#"], ["Status", "#"], ["Contact", "#"]]],
+  ["Developers", [["Docs", `${GITHUB_URL}#readme`], ["Design write-up", `${GITHUB_URL}/blob/main/DESIGN.md`], ["E2E flows", `${GITHUB_URL}/blob/main/docs/E2E-FLOWS.md`], ["GitHub", GITHUB_URL]]],
+  ["Company", [["Security", `${GITHUB_URL}/blob/main/SECURITY.md`], ["Status", `${API_URL}/status`], ["Health", `${API_URL}/health`], ["Contact", GITHUB_URL]]],
 ];
 
 export function Footer() {
@@ -101,7 +102,10 @@ export function Footer() {
           <div key={h}>
             <div style={{ font: "var(--fw-medium) var(--text-xs)/1 var(--font-sans)", color: "var(--text-secondary)", marginBottom: 12 }}>{h}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-              {links.map(([l, href]) => <a key={l} href={href} style={{ font: "var(--text-sm)/1 var(--font-sans)", color: "var(--text-muted)", textDecoration: "none" }}>{l}</a>)}
+              {links.map(([l, href]) => {
+                const external = href.startsWith("http");
+                return <a key={l} href={href} {...(external ? { target: "_blank", rel: "noreferrer" } : {})} style={{ font: "var(--text-sm)/1 var(--font-sans)", color: "var(--text-muted)", textDecoration: "none" }}>{l}</a>;
+              })}
             </div>
           </div>
         ))}

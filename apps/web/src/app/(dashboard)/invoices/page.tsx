@@ -13,6 +13,7 @@ import { DataTable, DriftIndicator, FilterBar, FilterSelect, LinkStatusPill, Pag
 import { api, type LinksFilter } from "@/lib/api/client";
 import { useApi, useTick } from "@/lib/api/hooks";
 import { timeAgo } from "@/lib/api/time";
+import { linksToCsv } from "@/lib/csv";
 
 const PAGE_SIZE = 5;
 const ENTITY_ICON: Record<string, string> = { invoice: "FileText", account: "User", customer: "User", payment: "CreditCard" };
@@ -45,6 +46,17 @@ export default function InvoicesPage() {
 
   const total = links ? links.length : 0;
   const pageRows = links ? links.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE) : [];
+
+  const onExport = () => {
+    if (!links || links.length === 0) return;
+    const blob = new Blob([linksToCsv(links)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "ledgerbridge-links.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const columns: Column<LinkDto>[] = [
     { key: "entityType", header: "Entity", width: "150px", render: (r) => (
@@ -91,7 +103,7 @@ export default function InvoicesPage() {
 
   return (
     <>
-      <PageHeader title="Invoices" description="Every linked entity between internal invoicing and QuickBooks Online. Open one to inspect the field-level diff." actions={<Button variant="secondary" size="md" leadingIcon={<Icon name="Download" size={15} />}>Export</Button>} />
+      <PageHeader title="Invoices" description="Every linked entity between internal invoicing and QuickBooks Online. Open one to inspect the field-level diff." actions={<Button variant="secondary" size="md" leadingIcon={<Icon name="Download" size={15} />} disabled={total === 0} onClick={onExport}>Export</Button>} />
       <div style={{ padding: "var(--space-7)" }}>
         <Card padded={false}>
           <FilterBar trailing={<span style={{ font: "var(--text-xs)/1 var(--font-mono)", color: "var(--text-faint)", fontVariantNumeric: "tabular-nums" }}>{total} link{total === 1 ? "" : "s"}</span>}>
