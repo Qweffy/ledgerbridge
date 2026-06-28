@@ -4,10 +4,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { api } from "@/lib/api/client";
 import { useApi } from "@/lib/api/hooks";
+import { CommandPalette } from "./command-palette";
 import { DemoSheet } from "./demo";
 import { Icon } from "./icon";
 import { ToastHost } from "./overlays";
@@ -179,7 +180,7 @@ function Sidebar({ active, conflictCount }: { active: string; conflictCount: num
   );
 }
 
-function TopBar({ crumbs, onDemo }: { crumbs: Crumb[]; onDemo: () => void }) {
+function TopBar({ crumbs, onDemo, onSearch }: { crumbs: Crumb[]; onDemo: () => void; onSearch: () => void }) {
   const all: Crumb[] = [{ label: "LedgerBridge" }, ...crumbs];
   return (
     <header style={{ height: "var(--topbar-h)", flexShrink: 0, display: "flex", alignItems: "center", gap: 12, padding: "0 18px", borderBottom: "1px solid var(--border-subtle)", background: "color-mix(in oklch, var(--surface-canvas) 80%, transparent)", backdropFilter: "blur(8px)", position: "sticky", top: 0, zIndex: 5 }}>
@@ -196,11 +197,18 @@ function TopBar({ crumbs, onDemo }: { crumbs: Crumb[]; onDemo: () => void }) {
         })}
       </nav>
       <div style={{ flex: 1 }} />
-      <div role="search" style={{ display: "flex", alignItems: "center", gap: 8, height: 30, padding: "0 9px", width: 220, background: "var(--surface-card)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-md)", color: "var(--text-faint)" }}>
+      <button
+        type="button"
+        onClick={onSearch}
+        aria-label="Open command palette"
+        style={{ display: "flex", alignItems: "center", gap: 8, height: 30, padding: "0 9px", width: 220, background: "var(--surface-card)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-md)", color: "var(--text-faint)", cursor: "pointer", textAlign: "left" }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface-hover)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = "var(--surface-card)"; }}
+      >
         <Icon name="Search" size={14} />
         <span style={{ font: "var(--text-sm)/1 var(--font-sans)", flex: 1 }}>Search…</span>
         <span style={{ font: "var(--text-2xs)/1 var(--font-mono)", border: "1px solid var(--border-default)", borderRadius: 4, padding: "2px 5px" }}>⌘K</span>
-      </div>
+      </button>
       <ConnectionStatus />
       <button
         type="button"
@@ -222,13 +230,28 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { active, crumbs } = derive(pathname);
   const { data: status } = useApi(() => api.getStatus(), [], { pollMs: 5000 });
   const [demoOpen, setDemoOpen] = useState(false);
+  const [cmdkOpen, setCmdkOpen] = useState(false);
+
+  // ⌘K / Ctrl-K toggles the command palette (fires even while typing — it's a chord).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCmdkOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <div style={{ display: "flex", height: "100vh", minHeight: 0, background: "var(--surface-canvas)" }}>
       <Sidebar active={active} conflictCount={status?.conflictCount ?? null} />
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100%" }}>
-        <TopBar crumbs={crumbs} onDemo={() => setDemoOpen(true)} />
+        <TopBar crumbs={crumbs} onDemo={() => setDemoOpen(true)} onSearch={() => setCmdkOpen(true)} />
         <main style={{ flex: 1, minHeight: 0, overflow: "auto" }}>{children}</main>
       </div>
+      <CommandPalette open={cmdkOpen} onClose={() => setCmdkOpen(false)} />
       <DemoSheet open={demoOpen} onClose={() => setDemoOpen(false)} />
       <ToastHost />
     </div>
