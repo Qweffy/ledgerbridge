@@ -1,83 +1,96 @@
 # LedgerBridge
 
-Two-way invoice sync between an internal invoicing system and **QuickBooks Online** (QBO), built to
-survive the messiness of real integrations: duplicate, delayed and out-of-order events, incomplete
-webhook payloads, and partial failures.
+**Two-way invoice sync between an internal invoicing system and QuickBooks Online (QBO)** — built to survive
+the messiness of real integrations: duplicate, delayed and out-of-order events, incomplete webhook payloads,
+and partial failures.
+
+[**▶ Live dashboard**](https://ledgerbridge-web.vercel.app) · [API health](https://ledgerbridgeapi-production.up.railway.app/health) · [Design write-up](DESIGN.md) · [End-to-end flows](docs/E2E-FLOWS.md) · [Security](SECURITY.md)
+
+![Operator dashboard — live counts, lag, dead-letter and conflict tracking, and a real-time event feed](docs/screenshots/overview.png)
 
 Two ideas carry the whole design:
 
-1. **A webhook is a ping, not the truth.** Every event triggers a **refetch** of the current state
-   from the source before anything is applied — which neutralises out-of-order and incomplete
-   payloads in one move.
-2. **Every write is idempotent.** Reprocessing the same event N times yields the same result: no
-   duplicate records, no repeated writes.
+1. **A webhook is a ping, not the truth.** Every event triggers a **refetch** of the current state from the
+   source before anything is applied — which neutralises out-of-order and incomplete payloads in one move.
+2. **Every write is idempotent.** Reprocessing the same event N times yields the same result: no duplicate
+   records, no repeated writes.
 
-## Live demo
+## Try it
 
-- **Dashboard** — https://ledgerbridge-web.vercel.app *(Vercel)*
-- **API** — https://ledgerbridgeapi-production.up.railway.app *(Railway; Fastify + the sync worker & reconciler)* — health at [`/health`](https://ledgerbridgeapi-production.up.railway.app/health), live counts at [`/status`](https://ledgerbridgeapi-production.up.railway.app/status)
+The [live dashboard](https://ledgerbridge-web.vercel.app) drives the whole engine against a **real QBO
+sandbox**. Open the **Demo** panel and:
 
-Open the dashboard's **Demo** panel to drive the whole pipeline against a real QBO sandbox (create → sync →
-edit-both → conflict → resolve → inject-fault → dead-letter → replay → reconcile). If the API is
-unreachable the dashboard falls back to mock fixtures, so the UI is always explorable.
+- **Create invoice** → watch it move `pending → processing → done` on the Events log and appear as a linked
+  invoice with a real QBO id.
+- **Edit in both** → a conflict opens on the Conflicts queue (neither side clobbered); resolve it by picking a
+  winner.
+- **Inject fault** → the event retries with backoff, dead-letters, and you **replay** it.
+- **Run reconciler** → drift from a missed webhook is caught and re-converged.
 
-## Status
+The dashboard falls back to bundled mock fixtures if the API is unreachable, so it's always explorable.
 
-Built and tested so far:
+## Screenshots
 
-- **Monorepo** — npm workspaces: `apps/api` (Fastify), `apps/web` (Next.js), `packages/shared`.
-- **Design system** — the LedgerBridge component library (tokens + 13 primitives) ported into
-  `apps/web` with a `/design` gallery, dark + light.
-- **Data model** — `links`, `sync_events` (outbox/inbox), `audit_log`, `oauth_tokens` + a
-  `dead_letter` view, with checked-in migrations.
-- **Internal system (simulated)** — `internal.*` invoices/payments/changes + a `/internal/*` API
-  that emits **HMAC-signed change webhooks** (money is integer cents).
-- **QBO OAuth2** — `/oauth/connect` + `/oauth/callback`, tokens stored in `oauth_tokens` with
-  auto-refresh; a thin Accounting API client (create / read / sparse-update / void invoice).
-- **Sync core (internal → QBO)** — signed-webhook ingest → durable outbox **worker** with a
-  `FOR UPDATE SKIP LOCKED` lease → **idempotent apply** (check-by-external-id before create) →
-  `links` + `audit_log`, with exponential-backoff retries, dead-lettering, and graceful shutdown.
-  The worker polls, and a Postgres **`LISTEN/NOTIFY`** trigger wakes it sub-second on a new event
-  (polling stays the fallback). Optional **OpenTelemetry** tracing (`OTEL_ENABLED`) spans the pipeline
-  (`sync.process_event` → `qbo.request`) on top of the always-on correlation-id logging.
-- **Reverse sync (QBO → internal) + loop prevention** — a `/webhooks/qbo` receiver (Intuit HMAC
-  verify + Change-Data-Capture parse) feeds the same outbox; the reverse processor refetches the QBO
-  invoice and applies it to the internal system. Two complementary guards keep the two directions
-  from ping-ponging: our own write-back is recognised by the QBO **`SyncToken`** we recorded, and the
-  internal-side echo it triggers is recognised by the state **hash** — so a change made in one system
-  lands in the other exactly once.
-- **Conflict handling (edited in both)** — each link keeps the **last-synced snapshot**; before
-  applying, both sides are diffed against it. A **same-field divergence** (both moved the amount,
-  differently) flags `status='conflict'` and **holds both directions** — no clobber — until an
-  operator resolves it (`resolveConflict`); disjoint-field edits apply independently and identical
-  edits converge. Flag-and-hold rather than cross-clock last-write-wins, so a real change is never
-  silently dropped (see DESIGN.md).
-- **Payments** — an internal payment syncs as a real QBO **`Payment`** with a `LinkedTxn` to the
-  invoice (so QBO's invoice Balance reflects it). Idempotent two ways: a `payment` link row
-  (skip if already synced) and a stable `Request-Id` (Intuit dedups a retried create — Payments have
-  no `DocNumber`). The reverse (a payment entered in QBO → internal) is deliberately deferred.
-- **Reconciler (the safety net)** — a periodic pass that **matches** invoices existing on both sides
-  with no link (by DocNumber + amount; ambiguity or a mismatch is flagged, never blindly linked) and
-  **recovers drift** from dropped webhooks: it refetches both sides and, when a version/hash has moved
-  past what we last synced, enqueues a **synthetic event** into the same idempotent outbox so the
-  worker re-converges the state. Skips anything the worker already has in flight; writes one heartbeat
-  audit row per pass. (Per-link refetch here; QBO's CDC endpoint is the production scale path.)
-- **Admin / observability API** — a read API over the engine's state (`/status` with event counts +
-  oldest-pending lag + dead-letter/conflict counts + last-reconcile; `/events`, `/links`,
-  `/conflicts`, `/audit`, each with detail routes) plus two operator actions: **`/conflicts/:id/resolve`**
-  (pick a winner) and **`/events/:id/replay`** (re-queue a dead-letter). The response contract lives as
-  zod schemas in `packages/shared`, so the dashboard consumes it type-safely — it's a one-env-var swap
-  from the mock client to the real API.
-- **Operator dashboard + landing (`apps/web`)** — a Next.js dashboard over the admin API: Overview (live
-  counts + event feed), Invoices with a field-level internal-vs-QBO diff, a Conflicts queue with one-click
-  resolve, an Events log with dead-letter replay, an Audit time-travel log, and a **Demo control panel**
-  that drives the engine live — plus a marketing landing page. It renders on mock fixtures out of the box;
-  one env var (`NEXT_PUBLIC_API_URL`) points it at the live API.
+| Landing — the two-way bridge | Invoices — field-level internal↔QBO diff |
+|---|---|
+| [![](docs/screenshots/landing.png)](docs/screenshots/landing.png) | [![](docs/screenshots/invoices-diff.png)](docs/screenshots/invoices-diff.png) |
 
-The whole pipeline is **verified end-to-end against the real QBO sandbox**, driven from the Demo panel:
-create an invoice → it syncs internal→QBO → edit it on both sides → a conflict opens → resolve it → inject
-a fault → the event dead-letters → replay it. Forward and reverse directions (including the no-loop round
-trip) are additionally covered by **66 deterministic tests** on an in-process Postgres with a mocked QBO
+| Conflicts — flag-and-hold, then resolve | Events — durable outbox, retries, dead-letter replay |
+|---|---|
+| [![](docs/screenshots/conflicts-resolve.png)](docs/screenshots/conflicts-resolve.png) | [![](docs/screenshots/events.png)](docs/screenshots/events.png) |
+
+| Audit — before→after time-travel | Demo — drive the engine live |
+|---|---|
+| [![](docs/screenshots/audit.png)](docs/screenshots/audit.png) | [![](docs/screenshots/demo.png)](docs/screenshots/demo.png) |
+
+## What's inside
+
+**Sync core (internal → QBO).** A signed-webhook ingest writes to a durable **`sync_events` outbox**; a
+**worker** claims one event at a time with a `FOR UPDATE SKIP LOCKED` lease, **refetches** the current state,
+maps it, and applies it **idempotently** (check-by-external-id before any create), recording the result to
+`links` + `audit_log`. Failures retry with exponential backoff and dead-letter; the process drains in-flight
+work on `SIGTERM`. The worker polls, and a Postgres **`LISTEN/NOTIFY`** trigger wakes it sub-second on a new
+event (polling stays the floor).
+
+**Reverse sync (QBO → internal) + loop prevention.** A `/webhooks/qbo` receiver (Intuit HMAC verify +
+Change-Data-Capture parse) feeds the same outbox; the reverse processor refetches the QBO invoice and applies
+it internally. Two guards stop the directions ping-ponging: our own write-back is recognised by the QBO
+**`SyncToken`** we recorded, and the internal-side echo it triggers by the state **hash** — so a change made in
+one system lands in the other **exactly once**.
+
+**Conflict handling (edited in both).** Each link keeps the **last-synced snapshot**; before applying, both
+sides are diffed against it. A **same-field divergence** (both moved the amount, differently) flags
+`status='conflict'` and **holds both directions** — no clobber — until an operator resolves it; disjoint-field
+edits apply independently and identical edits converge. Flag-and-hold rather than cross-clock last-write-wins,
+so a real financial change is never silently dropped.
+
+**Payments.** An internal payment syncs as a real QBO **`Payment`** with a `LinkedTxn` to the invoice (so QBO's
+invoice Balance reflects it). Idempotent two ways: a `payment` link row and a stable `Request-Id`. The reverse
+(a payment entered in QBO) is a documented deferral.
+
+**Reconciler (the safety net).** A periodic pass **matches** invoices that exist on both sides with no link
+(by DocNumber + amount; ambiguity or a mismatch is flagged, never blindly linked) and **recovers drift** from
+dropped webhooks: it refetches both sides and, when a version/hash has moved past what we last synced, enqueues
+a **synthetic event** into the same idempotent outbox so the worker re-converges the state.
+
+**Reliability under partial failure.** Durable outbox → leased worker (`pending → processing → done | dead`,
+stale-lock reclaim) → exponential backoff with permanent-vs-transient classification (a non-retryable QBO 4xx
+dead-letters immediately instead of burning the budget) → the reconciler as the catch-all for whatever the
+outbox never saw → graceful `SIGTERM` drain. The **timeout-after-write "money shot"** is handled: a create
+retried after a lost response is **adopted, not duplicated** (check-by-DocNumber first).
+
+**Observability.** Every event, audit row and log line carries a `correlation_id`; the append-only `audit_log`
+records before/after/result/error. Optional **OpenTelemetry** tracing (`OTEL_ENABLED`) spans the pipeline
+(`sync.process_event` → `qbo.request`).
+
+**Admin / observability API + operator dashboard.** A typed read API over the engine (`/status`, `/events`,
+`/links`, `/conflicts`, `/audit` with detail routes) plus two operator actions — **`/conflicts/:id/resolve`**
+and **`/events/:id/replay`** — its contract living as zod schemas in `packages/shared`. The Next.js dashboard
+consumes it type-safely: Overview, an Invoices diff, the Conflicts queue, the Events log, an Audit time-travel
+view, and the Demo panel — plus a marketing landing page.
+
+The whole pipeline is **verified end-to-end against the real QBO sandbox** and covered by **79 deterministic
+tests** (forward + reverse, including the no-loop round trip) on an in-process Postgres with a mocked QBO
 boundary.
 
 ## Architecture
@@ -95,15 +108,15 @@ Internal system  ──signed webhook──▶ ┌──────────
        loop prevention: QBO SyncToken (inbound echo) + state hash (internal echo)
 ```
 
+See [`DESIGN.md`](DESIGN.md) for the architecture write-up and the reasoning behind each decision.
+
 ## Stack
 
 - **TypeScript** across the board.
 - **apps/api** — Fastify, Drizzle ORM + Postgres (Neon), Zod at every boundary, Vitest.
-- **apps/web** — Next.js 16 (App Router) + Tailwind CSS v4 (CSS-first `@theme`) + shadcn/ui +
-  lucide-react.
+- **apps/web** — Next.js 16 (App Router) + Tailwind CSS v4 + shadcn/ui + lucide-react.
 - **packages/shared** — Zod schemas and types shared by the API and the web app.
-
-## Layout
+- **Deploy** — API + worker on Railway (a persistent service), web on Vercel, Postgres on Neon.
 
 ```
 apps/
@@ -120,13 +133,13 @@ Requirements: Node 22+, a Postgres database (a free [Neon](https://neon.tech) pr
 
 ```bash
 npm install
+cp apps/api/.env.example apps/api/.env.local   # then fill it in (see below)
+npm run db:migrate -w @ledgerbridge/api          # create the schema
+npm run dev:api                                   # Fastify on :3001 (ingest + sync worker + reconciler)
+npm run dev:web                                   # Next.js on :3000 (landing + dashboard + /design)
 ```
 
-Create `apps/api/.env.local` from the example and fill it in:
-
-```bash
-cp apps/api/.env.example apps/api/.env.local
-```
+Connect a QBO sandbox by opening <http://localhost:3001/oauth/connect> and authorising the app.
 
 | Variable | What it is |
 |---|---|
@@ -136,94 +149,58 @@ cp apps/api/.env.example apps/api/.env.local
 | `QBO_ENVIRONMENT` | `sandbox` or `production`. |
 | `QBO_REALM_ID` | The connected sandbox company id (from the OAuth callback). |
 | `QBO_DEFAULT_CUSTOMER` / `QBO_DEFAULT_ITEM` | The QBO Customer + Item the bridge maps internal invoices onto. |
-| `INTERNAL_WEBHOOK_SECRET` | HMAC key the simulated internal system signs its webhooks with. |
-| `INTERNAL_WEBHOOK_TARGET` | Where the internal system posts change webhooks (the bridge ingest, e.g. `http://localhost:3001/webhooks/internal`). |
-| `PORT` | API port (default `3001`). |
-| `WEB_ORIGIN` | Allowed browser origin(s) for the dashboard, comma-separated (CORS; default `http://localhost:3000`). |
+| `QBO_WEBHOOK_VERIFIER_TOKEN` | Intuit webhook Verifier Token; the `/webhooks/qbo` reverse receiver registers only when set (otherwise the reconciler is the reverse-sync path). |
+| `INTERNAL_WEBHOOK_SECRET` / `INTERNAL_WEBHOOK_TARGET` | HMAC key + URL for the simulated internal system's signed change webhooks. |
+| `WEB_ORIGIN` | Allowed browser origin(s) for the dashboard (CORS; default `http://localhost:3000`). |
+| `ADMIN_API_TOKEN` | Optional bearer token gating the admin/internal/demo routes (unset = open, for the demo). |
+| `OTEL_ENABLED` / `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional OpenTelemetry tracing. |
 
-> The sync worker only starts when `QBO_REALM_ID`, `QBO_DEFAULT_CUSTOMER` and `QBO_DEFAULT_ITEM` are
-> set (otherwise the API runs without it and logs a warning).
-
-Apply the migrations, then run the two dev servers (in separate terminals):
-
-```bash
-npm run db:migrate -w @ledgerbridge/api   # create the schema
-npm run dev:api                            # Fastify on :3001 (ingest + sync worker + reconciler)
-npm run dev:web                            # Next.js on :3000 (landing + dashboard + /design)
-```
-
-Connect a QBO sandbox by opening <http://localhost:3001/oauth/connect> and authorising the app.
-
-The dashboard renders on **mock fixtures** by default. To point it at the live local API, create
-`apps/web/.env.local` with `NEXT_PUBLIC_API_URL=http://localhost:3001` and restart `dev:web` — the topbar
-flips to "Live" and every screen reads the real engine.
-
-## Commands
+> The sync worker only starts when `QBO_REALM_ID`, `QBO_DEFAULT_CUSTOMER` and `QBO_DEFAULT_ITEM` are set.
+> The dashboard renders on **mock fixtures** by default; set `NEXT_PUBLIC_API_URL` in `apps/web/.env.local` to
+> point it at the live API (the topbar then flips to "Live").
 
 ```bash
 npm run typecheck   # tsc across workspaces
 npm run lint        # eslint across workspaces
-npm run test        # vitest (api) — runs against an in-process Postgres (PGlite)
-npm run db:generate # generate a migration from the Drizzle schema
-npm run db:migrate  # apply migrations
+npm run test        # vitest (api) — 79 tests against an in-process Postgres (PGlite)
 ```
 
 ## Tests
 
-79 tests run against an in-process Postgres (PGlite) with the real migrations applied and a fake QBO
+**79 tests** run against an in-process Postgres (PGlite) with the real migrations applied and a fake QBO
 boundary, so they exercise the production schema — idempotency, the outbox, conflict detection, loop
 prevention — without Docker or a remote database. Every spec edge case is covered: duplicate webhook
 (UNIQUE `event_id`), out-of-order (refetch beats a stale payload), edited-in-both → conflict, delete→void
 (both directions), timeout-after-write ("money shot": adopt-by-DocNumber, no duplicate), retry with
 backoff → dead-letter, permanent 4xx → immediate dead-letter, payments, the reconciler (match + drift),
 and a full QBO→internal round trip with the **echo dropped in both directions** (proving no loop). See
-[`DESIGN.md`](DESIGN.md#testing-strategy) for the strategy and [`docs/E2E-FLOWS.md`](docs/E2E-FLOWS.md)
-for the 10 reproducible end-to-end flows.
+[`DESIGN.md`](DESIGN.md#testing-strategy) for the strategy and [`docs/E2E-FLOWS.md`](docs/E2E-FLOWS.md) for
+the 10 reproducible end-to-end flows.
 
 ## Assumptions & tradeoffs
 
-- **Flag-and-hold, not last-write-wins.** Auto-resolving a same-field money conflict by `updatedAt` means
-  trusting two unsynchronised clocks (our server vs Intuit) and can silently drop a real financial change,
-  so a same-field amount divergence holds both sides until an operator decides. Disjoint-field edits apply
-  independently; identical edits converge. (Rationale in [`DESIGN.md`](DESIGN.md).)
+- **Flag-and-hold, not last-write-wins.** Auto-resolving a same-field money conflict by `updatedAt` trusts two
+  unsynchronised clocks (our server vs Intuit) and can silently drop a real change, so a same-field amount
+  divergence holds both sides until an operator decides.
 - **DB outbox + polling worker, not a managed queue.** A `sync_events` table with a `FOR UPDATE SKIP LOCKED`
-  lease gives the same exactly-once guarantees with no external infra; SQS/Inngest is the production scale
-  path. The worker + reconciler are continuous poll loops, so the API must run as a **persistent service**
-  (not serverless).
-- **Per-link refetch in the reconciler, not CDC.** Refetching each link each pass has no cursor to get
-  wrong and reuses the existing read+hash; QBO's Change-Data-Capture endpoint is the production path.
-- **The "internal" system is simulated.** There's no real upstream, so `apps/api` ships a minimal
-  Postgres-backed invoicing service (`/internal/*`) that emits HMAC-signed change webhooks — enough to
-  demonstrate genuine two-way sync.
-- **One connected sandbox realm; admin auth is opt-in.** Multi-tenant (per-realm isolation) is out of
-  scope (the data model already carries `realm_id`); the admin surface has an optional `ADMIN_API_TOKEN`
-  bearer guard, left unset in the demo so reviewers can drive it (see [`SECURITY.md`](SECURITY.md)).
-- **Amount is the only field that round-trips both ways**, so it's the conflict surface; `customerName` /
-  `balanceCents` are internal-only. **Reverse Payment sync (QBO → internal)** is deliberately deferred (a
-  documented asymmetry). Deletes map to QBO **voids** (accounting keeps a zeroed record, not a hard delete).
+  lease gives exactly-once processing with no external infra; SQS/Inngest is the production scale path. The
+  worker + reconciler are poll loops, so the API runs as a **persistent service** (not serverless).
+- **Per-link refetch in the reconciler, not CDC.** No cursor to get wrong, reuses the existing read+hash;
+  QBO's Change-Data-Capture endpoint is the production path.
+- **The "internal" system is simulated.** `apps/api` ships a minimal Postgres-backed invoicing service
+  (`/internal/*`) that emits HMAC-signed change webhooks — enough to demonstrate genuine two-way sync.
+- **One connected sandbox realm; admin auth is opt-in.** Multi-tenant isolation is out of scope (the data
+  model already carries `realm_id`); the admin surface has an optional `ADMIN_API_TOKEN` bearer guard, left
+  unset in the demo so reviewers can drive it.
+- **Amount is the only field that round-trips both ways**, so it's the conflict surface; deletes map to QBO
+  **voids** (a zeroed, audit-preserving record). Reverse Payment sync (QBO → internal) is deliberately deferred.
 
-## Production considerations
-
-What would change for production, beyond the scope of one sandbox: auth (bearer/session) on the admin API;
-the reconciler on QBO **CDC** instead of per-link refetch; the outbox on **SQS/Inngest** for multi-worker
-scale; **multi-tenant** realm support with per-realm token + webhook-key management and rotation; and a
-real upstream replacing the simulated internal system.
+The full reasoning is in [`DESIGN.md`](DESIGN.md); what would change for production is in its "Decisions made"
+and the [`SECURITY.md`](SECURITY.md) hardening roadmap.
 
 ## Security
 
-See [`SECURITY.md`](SECURITY.md) for the full threat model, the independent audit findings, and the
-production-hardening roadmap. In brief:
-
-- Secrets (the database URL, QBO keys) live only in `apps/api/.env.local`, which is gitignored;
-  the repo ships empty `.env.example` placeholders.
-- The internal→bridge webhook is authenticated with an HMAC-SHA256 signature compared in constant
-  time (an invalid signature is a `401`). The OAuth callback validates a signed, expiring `state`
-  to defend against CSRF, keyed by a value domain-separated from the client secret.
-- Inbound ids are constrained at the boundary (Zod) before being used as a QBO `DocNumber` in a
-  query.
-- Production hardening, deliberately out of scope for one connected sandbox: per-sender webhook
-  keys with a key id and rotation, and a dedicated OAuth state secret rather than one derived from
-  the client secret.
-- The admin/internal/demo API sits behind an **optional bearer guard** (`ADMIN_API_TOKEN`, constant-time
-  compare). It's left unset in the sandbox demo so the dashboard can drive the engine; setting one env var
-  locks the whole surface down. The public OAuth + webhook routes are excluded (they self-authenticate).
+[`SECURITY.md`](SECURITY.md) has the threat model, an independent audit, and the hardening roadmap. In brief:
+secrets live only in `.env.local` (gitignored); the internal webhook + the QBO webhook are HMAC-verified in
+constant time; the OAuth callback validates a signed, expiring `state` and pins the realm; inbound ids are
+zod-constrained at the boundary; and the admin surface sits behind an optional bearer guard.
