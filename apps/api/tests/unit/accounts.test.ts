@@ -93,6 +93,17 @@ describe("bridge — account sync (internal GL account → QBO Account)", () => 
     expect(link?.status).toBe("linked");
   });
 
+  it("maps the optional acctNum and active=false into the QBO Account body", async () => {
+    await createAccount(h.db, sink, { name: "Petty Cash", acctType: "Bank", acctNum: "1010", active: false });
+    await enqueueInternalEvent(h.db, lastEvent());
+    await processOne(h.db, deps);
+
+    expect(fake.accountCreateCalls).toBe(1);
+    expect(fake.lastAccountBody?.AccountType).toBe("Bank");
+    expect(fake.lastAccountBody?.AcctNum).toBe("1010");
+    expect(fake.lastAccountBody?.Active).toBe(false);
+  });
+
   it("an account rename syncs as a QBO update on the same account", async () => {
     const acct = await createAccount(h.db, sink, { name: "Old Name", acctType: "Income" });
     await enqueueInternalEvent(h.db, lastEvent());

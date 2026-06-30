@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { buildServer } from "../../src/server";
 import {
   createInvoice,
   deleteInvoice,
@@ -69,6 +70,42 @@ describe("internal system — change feed + signed webhooks", () => {
     const { invoice } = await recordPayment(h.db, sink, inv.id, 1000);
     expect(invoice.balanceCents).toBe(0);
     expect(invoice.status).toBe("paid");
+  });
+
+  it("a duplicate account name is a 409, not a 500 (create and rename-to-existing)", async () => {
+    const { sink } = captureSink();
+    const app = buildServer({ db: h.db, sink });
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/internal/accounts",
+      payload: { name: "Consulting Income", acctType: "Income" },
+    });
+    expect(first.statusCode).toBe(201);
+
+    // a second create with the same name hits the UNIQUE(name) constraint → 409
+    const dup = await app.inject({
+      method: "POST",
+      url: "/internal/accounts",
+      payload: { name: "Consulting Income", acctType: "Expense" },
+    });
+    expect(dup.statusCode).toBe(409);
+
+    // a distinct account renamed onto the first's name → 409 too
+    const other = await app.inject({
+      method: "POST",
+      url: "/internal/accounts",
+      payload: { name: "Rent Expense", acctType: "Expense" },
+    });
+    expect(other.statusCode).toBe(201);
+    const rename = await app.inject({
+      method: "PATCH",
+      url: `/internal/accounts/${other.json().id}`,
+      payload: { name: "Consulting Income" },
+    });
+    expect(rename.statusCode).toBe(409);
+
+    await app.close();
   });
 
   it("the webhook sink signs the body with HMAC-SHA256", async () => {
