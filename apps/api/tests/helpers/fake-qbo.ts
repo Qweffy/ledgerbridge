@@ -1,4 +1,4 @@
-import type { QboInvoiceOps, QboPaymentOps } from "../../src/bridge/qbo-ops";
+import type { QboAccountOps, QboInvoiceOps, QboPaymentOps } from "../../src/bridge/qbo-ops";
 
 // Reach into a QBO invoice body's first line amount (dollars) → integer cents.
 export function bodyCents(invoice: Record<string, unknown>): number {
@@ -98,16 +98,82 @@ export function createFakeQbo() {
     },
   };
 
+  interface Acct {
+    Id: string;
+    SyncToken: string;
+    Name: string;
+    body: Record<string, unknown>;
+  }
+  const accountsById = new Map<string, Acct>();
+  const accountByName = new Map<string, string>();
+  const accountByReqId = new Map<string, string>();
+  let accountSeq = 900;
+  let accountCreateCalls = 0;
+  let accountUpdateCalls = 0;
+  let lastAccountBody: Record<string, unknown> | undefined;
+
+  const accounts: QboAccountOps = {
+    async findByName(name) {
+      const id = accountByName.get(name);
+      if (id === undefined) return undefined;
+      const a = accountsById.get(id);
+      return a ? { Id: a.Id, SyncToken: a.SyncToken } : undefined;
+    },
+    async create(account, requestId) {
+      // Mirror Intuit's Request-Id dedup: a retry with the same id returns the original.
+      const seen = accountByReqId.get(requestId);
+      if (seen) return { Id: seen, SyncToken: "0" };
+      accountCreateCalls += 1;
+      lastAccountBody = account;
+      const id = String((accountSeq += 1));
+      const name = String((account as { Name?: unknown }).Name ?? id);
+      accountsById.set(id, { Id: id, SyncToken: "0", Name: name, body: account });
+      accountByName.set(name, id);
+      accountByReqId.set(requestId, id);
+      return { Id: id, SyncToken: "0" };
+    },
+    async read(id) {
+      const a = accountsById.get(id);
+      if (!a) throw new Error(`qbo account ${id} not found`);
+      return { Id: a.Id, SyncToken: a.SyncToken };
+    },
+    async update(account) {
+      accountUpdateCalls += 1;
+      lastAccountBody = account;
+      const id = String((account as { Id?: unknown }).Id);
+      const a = accountsById.get(id);
+      if (!a) throw new Error(`qbo account ${id} not found`);
+      a.SyncToken = String(Number(a.SyncToken) + 1);
+      const newName = (account as { Name?: unknown }).Name;
+      if (typeof newName === "string" && newName !== a.Name) {
+        accountByName.delete(a.Name);
+        a.Name = newName;
+        accountByName.set(newName, id);
+      }
+      return { Id: a.Id, SyncToken: a.SyncToken };
+    },
+  };
+
   return {
     ops,
     payments,
     paymentsById,
+    accounts,
+    accountsById,
     byId,
     byDoc,
     seed(docNumber: string, totalCents = 0): string {
       const id = String((seq += 1));
       byId.set(id, { Id: id, SyncToken: "0", DocNumber: docNumber, voided: false, totalCents });
       byDoc.set(docNumber, id);
+      return id;
+    },
+    // Seed a QBO Account that exists with no link to us (e.g. a create that landed but
+    // whose link write was lost) — the account adopt-by-Name path should find it.
+    seedAccount(name: string): string {
+      const id = String((accountSeq += 1));
+      accountsById.set(id, { Id: id, SyncToken: "0", Name: name, body: {} });
+      accountByName.set(name, id);
       return id;
     },
     // Simulate a change made directly in QBO (not by us): bump the version so the
@@ -139,6 +205,15 @@ export function createFakeQbo() {
     },
     get lastPaymentBody() {
       return lastPaymentBody;
+    },
+    get accountCreateCalls() {
+      return accountCreateCalls;
+    },
+    get accountUpdateCalls() {
+      return accountUpdateCalls;
+    },
+    get lastAccountBody() {
+      return lastAccountBody;
     },
   };
 }
