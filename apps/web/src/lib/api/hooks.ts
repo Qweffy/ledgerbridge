@@ -49,6 +49,9 @@ export function useApi<T>(
       cancelled = true;
       clearInterval(id);
     };
+    // fn is intentionally keyed via depKey (the stringified deps); depending on it
+    // would re-run the fetch/poll every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depKey, pollMs, reloadN]);
 
   const reload = () => {
