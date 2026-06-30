@@ -68,6 +68,13 @@ so a real financial change is never silently dropped.
 invoice Balance reflects it). Idempotent two ways: a `payment` link row and a stable `Request-Id`. The reverse
 (a payment entered in QBO) is a documented deferral.
 
+**Accounts (chart of accounts).** Internal GL accounts sync to QBO **`Account`** entities (internal → QBO).
+Because a QBO `Account.Name` is unique, this path has the strongest idempotency: **check-before-create by
+Name** adopts a create that landed but whose link write was lost (no duplicate), an unchanged re-delivery is
+hashed and skipped, and a stable `Request-Id` adds Intuit's dedup. Raw GL `JournalEntry` posting is out of
+scope by design — QBO auto-generates the journal entries from invoice/payment postings, so the chart of
+accounts those postings reference is the meaningful thing to sync (see [DESIGN.md](DESIGN.md)).
+
 **Reconciler (the safety net).** A periodic pass **matches** invoices that exist on both sides with no link
 (by DocNumber + amount; ambiguity or a mismatch is flagged, never blindly linked) and **recovers drift** from
 dropped webhooks: it refetches both sides and, when a version/hash has moved past what we last synced, enqueues
@@ -89,7 +96,7 @@ and **`/events/:id/replay`** — its contract living as zod schemas in `packages
 consumes it type-safely: Overview, an Invoices diff, the Conflicts queue, the Events log, an Audit time-travel
 view, and the Demo panel — plus a marketing landing page.
 
-The whole pipeline is **verified end-to-end against the real QBO sandbox** and covered by **79 deterministic
+The whole pipeline is **verified end-to-end against the real QBO sandbox** and covered by **82 deterministic
 tests** (forward + reverse, including the no-loop round trip) on an in-process Postgres with a mocked QBO
 boundary.
 
@@ -162,12 +169,12 @@ Connect a QBO sandbox by opening <http://localhost:3001/oauth/connect> and autho
 ```bash
 npm run typecheck   # tsc across workspaces
 npm run lint        # eslint across workspaces
-npm run test        # vitest (api) — 79 tests against an in-process Postgres (PGlite)
+npm run test        # vitest (api) — 82 tests against an in-process Postgres (PGlite)
 ```
 
 ## Tests
 
-**79 tests** run against an in-process Postgres (PGlite) with the real migrations applied and a fake QBO
+**82 tests** run against an in-process Postgres (PGlite) with the real migrations applied and a fake QBO
 boundary, so they exercise the production schema — idempotency, the outbox, conflict detection, loop
 prevention — without Docker or a remote database. Every spec edge case is covered: duplicate webhook
 (UNIQUE `event_id`), out-of-order (refetch beats a stale payload), edited-in-both → conflict, delete→void
@@ -194,6 +201,9 @@ the 10 reproducible end-to-end flows.
   unset in the demo so reviewers can drive it.
 - **Amount is the only field that round-trips both ways**, so it's the conflict surface; deletes map to QBO
   **voids** (a zeroed, audit-preserving record). Reverse Payment sync (QBO → internal) is deliberately deferred.
+- **GL accounts sync internal → QBO** (the chart of accounts, as QBO `Account` entities); raw GL `JournalEntry`
+  posting is out of scope because QBO derives the journal entries from invoice/payment postings, so syncing the
+  chart of accounts is the non-duplicating slice. Reverse (QBO → internal) account sync is deferred too.
 
 The full reasoning is in [`DESIGN.md`](DESIGN.md); what would change for production is in its "Decisions made"
 and the [`SECURITY.md`](SECURITY.md) hardening roadmap.
