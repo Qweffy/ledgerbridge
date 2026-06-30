@@ -1,10 +1,11 @@
 "use client";
 /* React data hook (ported from the bundle's client.jsx useApi): loading / empty /
    error, with optional silent polling that keeps the last data on transient errors
-   so views feel live without loading flicker. The fetch lives inside the effect
-   (closing over fn for the current dep key); reload bumps a counter to re-run it.
-   No refs, no synchronous setState in the effect — happy under the React Compiler. */
-import { useEffect, useState } from "react";
+   so views feel live without loading flicker. The fetch lives inside the effect and
+   reads fn from a latest-ref, so the effect keys on the stringified deps (not on fn,
+   a fresh arrow each render) without re-running every render; reload bumps a counter
+   to re-run it. No synchronous setState in the effect body — happy under the React Compiler. */
+import { useEffect, useRef, useState } from "react";
 
 export interface UseApiState<T> {
   data: T | null;
@@ -26,11 +27,17 @@ export function useApi<T>(
   const [reloadN, setReloadN] = useState(0);
   const depKey = JSON.stringify(deps);
 
+  // Keep the latest fn in a ref so the data effect depends only on depKey/poll/reload.
+  const fnRef = useRef(fn);
+  useEffect(() => {
+    fnRef.current = fn;
+  });
+
   useEffect(() => {
     let cancelled = false;
     const load = (silent: boolean) => {
       Promise.resolve()
-        .then(fn)
+        .then(() => fnRef.current())
         .then(
           (data) => {
             if (!cancelled) setState({ data, loading: false, error: null, stale: false });
@@ -49,9 +56,6 @@ export function useApi<T>(
       cancelled = true;
       clearInterval(id);
     };
-    // fn is intentionally keyed via depKey (the stringified deps); depending on it
-    // would re-run the fetch/poll every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depKey, pollMs, reloadN]);
 
   const reload = () => {
