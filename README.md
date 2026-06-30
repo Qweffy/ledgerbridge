@@ -96,7 +96,7 @@ and **`/events/:id/replay`** — its contract living as zod schemas in `packages
 consumes it type-safely: Overview, an Invoices diff, the Conflicts queue, the Events log, an Audit time-travel
 view, and the Demo panel — plus a marketing landing page.
 
-The whole pipeline is **verified end-to-end against the real QBO sandbox** and covered by **84 deterministic
+The whole pipeline is **verified end-to-end against the real QBO sandbox** and covered by **86 deterministic
 tests** (forward + reverse, including the no-loop round trip) on an in-process Postgres with a mocked QBO
 boundary.
 
@@ -169,12 +169,12 @@ Connect a QBO sandbox by opening <http://localhost:3001/oauth/connect> and autho
 ```bash
 npm run typecheck   # tsc across workspaces
 npm run lint        # eslint across workspaces
-npm run test        # vitest (api) — 84 tests against an in-process Postgres (PGlite)
+npm run test        # vitest (api) — 86 tests against an in-process Postgres (PGlite)
 ```
 
 ## Tests
 
-**84 tests** run against an in-process Postgres (PGlite) with the real migrations applied and a fake QBO
+**86 tests** run against an in-process Postgres (PGlite) with the real migrations applied and a fake QBO
 boundary, so they exercise the production schema — idempotency, the outbox, conflict detection, loop
 prevention — without Docker or a remote database. Every spec edge case is covered: duplicate webhook
 (UNIQUE `event_id`), out-of-order (refetch beats a stale payload), edited-in-both → conflict, delete→void

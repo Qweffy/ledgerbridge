@@ -27,6 +27,11 @@ trace from each untrusted input to its sinks and grounded in current best practi
 path before being accepted as a finding; pattern-matches with no reachable path (e.g. "raw-looking" SQL
 that is actually Drizzle-parameterized) were discarded.
 
+A **second pass** (after the account-sync work) re-ran the same `/security-review` lens plus a multi-agent
+adversarial sweep — one reviewer per vulnerability class (injection, authz, secrets/PII, crypto, SSRF/web,
+business-logic/race), each finding refuted by an independent skeptic before counting — and a dependency
+audit (`npm audit`). That pass added findings **7–9** below.
+
 ## Findings
 
 | # | Finding | Severity | Status |
@@ -37,6 +42,9 @@ that is actually Drizzle-parameterized) were discarded.
 | 4 | OAuth tokens stored plaintext at rest | Low | **Accepted** (sandbox) → roadmap |
 | 5 | Token refresh has no cross-process advisory lock | Low | **Accepted** (single process) → roadmap |
 | 6 | No security headers / rate limiting | Low | **Accepted** → roadmap |
+| 7 | OAuth authorization `code` logged in the request URL query string | Medium | **Fixed** — query string stripped from request logs |
+| 8 | OAuth callback echoed Intuit's raw token-endpoint error body in a 500 | Low | **Fixed** — generic 502, upstream body logged server-side only |
+| 9 | `drizzle-orm@0.36.4` advisory (CVE-2026-39356) + dev-only tooling advisories | High (advisory) | **Accepted** — not reachable in our code; documented upgrade path |
 
 ### 1 — Authentication on the admin surface (High, fixed)
 Every `/internal/*`, `/demo/*`, and observability route was unauthenticated. Harmless on localhost, but
@@ -67,7 +75,42 @@ exploitable: the only values reaching it are our own generated ids (`INV-{hex}`)
 `entityId`, already constrained to `/^[A-Za-z0-9:_-]+$/` at ingest — the user-settable `docNumber` field
 never reaches a query. Still, it was safe by convention, not construction. Fix: a `qboQuoteLiteral` helper
 backslash-escapes `'` and `\` per Intuit's documented escaping, so no value can break out of the literal.
-Test: `qbo-ops.test.ts`.
+Test: `qbo-ops.test.ts`. The account path's `findByName` (added later) routes the account **Name** through
+the same `qboQuoteLiteral`, verified non-exploitable in the second-pass review.
+
+### 7 — Authorization code in request logs (Medium, fixed)
+The server logged with Fastify's default request serializer, which records `req.url` **including the query
+string**. The public `GET /oauth/callback?code=<code>&state=…&realmId=…` therefore wrote the single-use
+authorization `code` into the application logs in cleartext (CWE-532). The window that matters is a failed
+token exchange: the `code` is logged at `onRequest` but, if the exchange throws, never redeemed — leaving a
+live, exchangeable credential in the log stream until its ~10-minute TTL. (`telemetry.ts` already keyed spans
+off the route template to avoid exactly this for traces; the HTTP logger lacked the equivalent guard.) Fix:
+a `logSafeUrl` helper strips the query string so only the path (`/oauth/callback`) is logged, applied via a
+custom `req` serializer in [server.ts](apps/api/src/server.ts). Tests: `oauth.test.ts` — `logSafeUrl` unit
+test.
+
+### 8 — Upstream error body echoed to the caller (Low, fixed)
+`/oauth/callback` ran `exchangeCode` + `saveTokens` with no `try/catch`, so an Intuit token-endpoint failure
+threw an error whose message embedded Intuit's **raw response body** ([intuit.ts](apps/api/src/oauth/intuit.ts)),
+which Fastify's default handler returned verbatim in the 500. No LedgerBridge secret leaks (the client secret
+and refresh token are in the request, not the response), but it's upstream provider-detail disclosure and
+contradicted the "structured errors only" guarantee. Reachable without forging `state` (mint a legit one via
+`/oauth/connect`, replay with a garbage `code`). Fix: the exchange is wrapped — the detail is logged
+server-side and the caller gets a generic `502 { error: "token exchange failed" }`
+([oauth/routes.ts](apps/api/src/oauth/routes.ts)). Test: `oauth.test.ts` — "returns a generic 502 (not
+Intuit's raw error body)".
+
+### 9 — Dependency advisories (`npm audit`) — triaged, accepted
+`npm audit` flags `drizzle-orm@0.36.4` for **CVE-2026-39356** (SQL injection via improperly escaped SQL
+**identifiers**, fixed in `0.45.2`). Traced: the advisory only affects `sql.identifier()` and input-derived
+`.as()` aliases — **neither is used** (no `sql.identifier()` anywhere; the only `.as()` is the static
+`pgView("dead_letter")` view definition). Every Drizzle identifier in this codebase is a static schema column;
+only parameterized **values** are interpolated. So it is **not reachable** here. The remaining advisories
+(`esbuild`/`vite`/`vitest`, `postcss` via `next`) are **dev/build-time tooling**, not present in the deployed
+runtime (`npm audit --omit=dev` shows none of them in production deps). Decision: not worth a cascade of
+breaking dep upgrades (the `0.45.2` bump alone changes the driver's error-wrapping and broke a test) on a
+working, deployed, fully-tested system right before submission, for advisories with no reachable path.
+Upgrade path (`drizzle-orm@0.45.2`, the dev-tooling bumps) is the documented follow-up.
 
 ## Verified safe (examined, no change needed)
 - **SQL injection.** All database access uses Drizzle's parameterized builder (`eq`/`and`/`inArray`,
@@ -77,8 +120,10 @@ Test: `qbo-ops.test.ts`.
   `crypto.timingSafeEqual` — constant-time, no early-exit string compare.
 - **OAuth CSRF.** `state` is `nonce.exp.hmac`, signed with a key domain-separated from the client secret,
   TTL-checked, and compared timing-safe.
-- **Secret / error exposure.** No secrets or tokens are logged or returned; error responses are structured
-  messages (flattened zod issues, not stack traces). CORS `origin` is env-driven, not a permissive reflector.
+- **Secret / error exposure.** After findings 7–8: request logs strip the query string (so the OAuth `code`
+  is never logged), and error responses are structured messages (flattened zod issues / generic strings, not
+  stack traces and not upstream provider bodies). The QBO `access_token` / refresh token and the client secret
+  are never logged or returned. CORS `origin` is env-driven, not a permissive reflector.
 
 ## Deliberate tradeoffs (sandbox scope)
 - **The demo runs with `ADMIN_API_TOKEN` unset**, so the admin surface is open — by choice, so reviewers
