@@ -1,8 +1,11 @@
 import {
+  createAccount,
   createInvoice,
   createPayment,
+  getAccount,
   getInvoice,
   qboQuery,
+  updateAccount,
   updateInvoice,
   voidInvoice,
   type QboClientDeps,
@@ -40,6 +43,16 @@ export interface QboInvoiceOps {
 // link row (our DB) plus the Request-Id header (Intuit's API-level dedup).
 export interface QboPaymentOps {
   create(payment: Record<string, unknown>, requestId: string): Promise<QboRef>;
+}
+
+// The account operations the account processor needs. A QBO Account.Name is unique,
+// so unlike payments it has a real check-before-create (find-by-name) — the account
+// analogue of the invoice's check-by-DocNumber that survives a write-then-timeout.
+export interface QboAccountOps {
+  findByName(name: string): Promise<QboRef | undefined>;
+  create(account: Record<string, unknown>, requestId: string): Promise<QboRef>;
+  read(id: string): Promise<QboRef>;
+  update(account: Record<string, unknown>): Promise<QboRef>;
 }
 
 interface QboInvoiceBody extends QboRef {
@@ -122,6 +135,37 @@ export function createQboPaymentOps(deps: QboClientDeps): QboPaymentOps {
     async create(payment, requestId) {
       const res = (await createPayment(deps, payment, requestId)) as PaymentEnvelope;
       return res.Payment;
+    },
+  };
+}
+
+interface AccountEnvelope {
+  Account: QboRef;
+}
+interface AccountQueryEnvelope {
+  QueryResponse: { Account?: QboRef[] };
+}
+
+export function createQboAccountOps(deps: QboClientDeps): QboAccountOps {
+  return {
+    async findByName(name) {
+      const res = (await qboQuery(
+        deps,
+        `select Id, SyncToken from Account where Name = '${qboQuoteLiteral(name)}'`,
+      )) as AccountQueryEnvelope;
+      return res.QueryResponse.Account?.[0];
+    },
+    async create(account, requestId) {
+      const res = (await createAccount(deps, account, requestId)) as AccountEnvelope;
+      return res.Account;
+    },
+    async read(id) {
+      const res = (await getAccount(deps, id)) as AccountEnvelope;
+      return res.Account;
+    },
+    async update(account) {
+      const res = (await updateAccount(deps, account)) as AccountEnvelope;
+      return res.Account;
     },
   };
 }

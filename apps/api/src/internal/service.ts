@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { internalChanges, internalInvoices, internalPayments } from "../../db/internal";
+import { internalAccounts, internalChanges, internalInvoices, internalPayments } from "../../db/internal";
 import type { Database } from "../../db/types";
 import type { ChangeEvent, ChangeSink } from "./sink";
 
 export type InternalInvoice = typeof internalInvoices.$inferSelect;
 export type InternalPayment = typeof internalPayments.$inferSelect;
+export type InternalAccount = typeof internalAccounts.$inferSelect;
 
 export interface CreateInvoiceInput {
   customerName: string;
@@ -243,4 +244,108 @@ export async function deleteInvoice(
     snapshot: snapshotOf(inv),
   });
   return inv;
+}
+
+export interface CreateAccountInput {
+  name: string;
+  acctType: string;
+  acctNum?: string;
+  active?: boolean;
+}
+export interface UpdateAccountInput {
+  name?: string;
+  acctType?: string;
+  acctNum?: string;
+  active?: boolean;
+}
+
+function accountSnapshotOf(acct: InternalAccount): Record<string, unknown> {
+  return {
+    id: acct.id,
+    name: acct.name,
+    acctType: acct.acctType,
+    acctNum: acct.acctNum,
+    active: acct.active,
+    version: acct.version,
+  };
+}
+
+export async function getAccount(
+  db: Database,
+  id: string,
+): Promise<InternalAccount | undefined> {
+  const [acct] = await db
+    .select()
+    .from(internalAccounts)
+    .where(eq(internalAccounts.id, id))
+    .limit(1);
+  return acct;
+}
+
+export async function listAccounts(db: Database): Promise<InternalAccount[]> {
+  return db.select().from(internalAccounts);
+}
+
+async function loadAccount(db: Database, id: string): Promise<InternalAccount> {
+  const acct = await getAccount(db, id);
+  if (!acct) throw new NotFoundError(`account ${id} not found`);
+  return acct;
+}
+
+export async function createAccount(
+  db: Database,
+  sink: ChangeSink,
+  input: CreateAccountInput,
+): Promise<InternalAccount> {
+  const id = newId("ACCT");
+  const [acct] = await db
+    .insert(internalAccounts)
+    .values({
+      id,
+      name: input.name,
+      acctType: input.acctType,
+      acctNum: input.acctNum,
+      active: input.active ?? true,
+      version: 1,
+    })
+    .returning();
+  if (!acct) throw new Error("failed to create account");
+  await emitChange(db, sink, {
+    entity: "account",
+    entityId: acct.id,
+    changeType: "create",
+    version: acct.version,
+    snapshot: accountSnapshotOf(acct),
+  });
+  return acct;
+}
+
+export async function updateAccount(
+  db: Database,
+  sink: ChangeSink,
+  id: string,
+  patch: UpdateAccountInput,
+): Promise<InternalAccount> {
+  const current = await loadAccount(db, id);
+  const [acct] = await db
+    .update(internalAccounts)
+    .set({
+      name: patch.name ?? current.name,
+      acctType: patch.acctType ?? current.acctType,
+      acctNum: patch.acctNum ?? current.acctNum,
+      active: patch.active ?? current.active,
+      version: current.version + 1,
+      updatedAt: new Date(),
+    })
+    .where(eq(internalAccounts.id, id))
+    .returning();
+  if (!acct) throw new Error("failed to update account");
+  await emitChange(db, sink, {
+    entity: "account",
+    entityId: acct.id,
+    changeType: "update",
+    version: acct.version,
+    snapshot: accountSnapshotOf(acct),
+  });
+  return acct;
 }

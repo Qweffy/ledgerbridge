@@ -8,6 +8,7 @@ import { hashInvoice, mapInvoiceToQbo, type QboInvoiceDefaults } from "./mapping
 import type { QboInvoiceOps, QboInvoiceState } from "./qbo-ops";
 import { processQboToInternal, type InternalApply } from "./reverse";
 import { processPaymentToQbo, type PaymentProcessorDeps } from "./payments";
+import { processAccountToQbo, type AccountProcessorDeps } from "./accounts";
 
 export type SyncEventRow = typeof syncEvents.$inferSelect;
 
@@ -21,6 +22,8 @@ export interface ProcessorDeps {
   applyToInternal?: InternalApply;
   // Payment sync (internal payment → QBO Payment). Optional.
   payments?: PaymentProcessorDeps;
+  // Account sync (internal GL account → QBO Account). Optional.
+  accounts?: AccountProcessorDeps;
   // Demo/test seam: when armed, throws before an outbound QBO write so a fault can
   // be exercised through to retry → dead-letter. Inert (undefined) in normal runs.
   faultInjector?: () => void;
@@ -57,6 +60,14 @@ export async function processEvent(
     // Only internal → QBO payments for now; QBO Payment → internal is deferred.
     if (event.source === "internal" && deps.payments) {
       return processPaymentToQbo(db, event, deps.payments, now);
+    }
+    return;
+  }
+
+  if (event.entityType === "account") {
+    // Only internal → QBO accounts; QBO Account → internal is deferred (documented).
+    if (event.source === "internal" && deps.accounts) {
+      return processAccountToQbo(db, event, deps.accounts, now);
     }
   }
 }

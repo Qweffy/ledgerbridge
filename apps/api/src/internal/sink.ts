@@ -4,7 +4,7 @@ import { createHmac } from "node:crypto";
 // refetches the full entity rather than trusting this payload.
 export interface ChangeEvent {
   eventId: string;
-  entity: "invoice" | "payment";
+  entity: "invoice" | "payment" | "account";
   entityId: string;
   changeType: "create" | "update" | "pay" | "delete";
   version: number;

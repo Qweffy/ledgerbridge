@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { InternalInvoice } from "../internal/service";
+import type { InternalAccount, InternalInvoice } from "../internal/service";
 
 export interface QboInvoiceDefaults {
   customerRef: string;
@@ -68,5 +68,30 @@ export function mapPaymentToQbo(
 // Fingerprint of a payment's synced fields, stored on its link.
 export function hashPayment(pay: { id: string; invoiceId: string; amountCents: number }): string {
   const canonical = JSON.stringify({ id: pay.id, invoiceId: pay.invoiceId, amountCents: pay.amountCents });
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
+// Map an internal GL account to a QBO Account body. Name is the external-id key
+// (unique in QBO), so it drives idempotent check-before-create like an invoice's
+// DocNumber. AcctNum is only sent when set.
+export function mapAccountToQbo(acct: InternalAccount): Record<string, unknown> {
+  return {
+    Name: acct.name,
+    AccountType: acct.acctType,
+    Active: acct.active,
+    ...(acct.acctNum ? { AcctNum: acct.acctNum } : {}),
+  };
+}
+
+// Fingerprint of an account's synced fields, stored on its link — an unchanged
+// re-delivery hashes equal and is skipped.
+export function hashAccount(acct: InternalAccount): string {
+  const canonical = JSON.stringify({
+    id: acct.id,
+    name: acct.name,
+    acctType: acct.acctType,
+    acctNum: acct.acctNum,
+    active: acct.active,
+  });
   return createHash("sha256").update(canonical).digest("hex");
 }

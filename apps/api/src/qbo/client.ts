@@ -91,6 +91,32 @@ export function getPayment(deps: QboClientDeps, id: string): Promise<unknown> {
   return qboRequest(deps, "GET", `/payment/${id}`);
 }
 
+// A QBO Account (chart-of-accounts entry). Name is unique, so a retried create
+// after a lost response is also caught by check-before-create (query by Name);
+// requestId → Request-Id adds Intuit's API-level dedup on top.
+export function createAccount(
+  deps: QboClientDeps,
+  account: unknown,
+  requestId?: string,
+): Promise<unknown> {
+  return qboRequest(
+    deps,
+    "POST",
+    "/account",
+    account,
+    requestId ? { "Request-Id": requestId } : undefined,
+  );
+}
+
+export function getAccount(deps: QboClientDeps, id: string): Promise<unknown> {
+  return qboRequest(deps, "GET", `/account/${id}`);
+}
+
+// Sparse update — `account` must carry Id + SyncToken; only the supplied fields change.
+export function updateAccount(deps: QboClientDeps, account: Record<string, unknown>): Promise<unknown> {
+  return qboRequest(deps, "POST", "/account", { ...account, sparse: true });
+}
+
 // Sparse update — `invoice` must carry Id + SyncToken; only the supplied fields change.
 export function updateInvoice(deps: QboClientDeps, invoice: Record<string, unknown>): Promise<unknown> {
   return qboRequest(deps, "POST", "/invoice", { ...invoice, sparse: true });

@@ -28,7 +28,7 @@ export const internalChangeType = internalSchema.enum("change_type", [
   "pay",
   "delete",
 ]);
-export const internalEntity = internalSchema.enum("entity", ["invoice", "payment"]);
+export const internalEntity = internalSchema.enum("entity", ["invoice", "payment", "account"]);
 
 export const internalInvoices = internalSchema.table("invoices", {
   id: text("id").primaryKey(),
@@ -42,6 +42,20 @@ export const internalInvoices = internalSchema.table("invoices", {
   issuedAt: timestamp("issued_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
+});
+
+// Chart of accounts (GL accounts) the internal system owns. Each is pushed to a
+// QBO Account; Name is unique, which is the external-id key for idempotent
+// check-before-create (the account analogue of an invoice's DocNumber).
+export const internalAccounts = internalSchema.table("accounts", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  acctType: text("acct_type").notNull(),
+  acctNum: text("acct_num"),
+  active: boolean("active").notNull().default(true),
+  version: integer("version").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const internalPayments = internalSchema.table("payments", {

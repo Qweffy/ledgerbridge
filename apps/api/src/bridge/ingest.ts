@@ -7,7 +7,7 @@ import type { Database } from "../../db/types";
 // The signed webhook the internal system emits (mirrors internal/sink.ts).
 export const changeEventSchema = z.object({
   eventId: z.string().min(1),
-  entity: z.enum(["invoice", "payment"]),
+  entity: z.enum(["invoice", "payment", "account"]),
   // Constrained at the boundary so an id can be safely used as a QBO DocNumber in
   // a query (no injection) — rejected with 400 otherwise.
   entityId: z.string().regex(/^[A-Za-z0-9:_-]+$/),
@@ -28,7 +28,7 @@ export async function enqueueInternalEvent(
     .values({
       eventId: event.eventId,
       source: "internal",
-      entityType: event.entity === "payment" ? "payment" : "invoice",
+      entityType: event.entity,
       entityExternalId: event.entityId,
       payload: event,
       correlationId: event.eventId,

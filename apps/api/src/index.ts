@@ -16,8 +16,8 @@ const { db } = await import("../db");
 const { buildServer } = await import("./server");
 const { loadQboConfig } = await import("./config");
 const { createWebhookSink, noopSink } = await import("./internal/sink");
-const { getInvoice, getPayment, listInvoices, updateInvoice, deleteInvoice } = await import("./internal/service");
-const { createQboInvoiceOps, createQboPaymentOps } = await import("./bridge/qbo-ops");
+const { getInvoice, getPayment, getAccount, listInvoices, updateInvoice, deleteInvoice } = await import("./internal/service");
+const { createQboInvoiceOps, createQboPaymentOps, createQboAccountOps } = await import("./bridge/qbo-ops");
 const { startWorker, DEFAULT_MAX_ATTEMPTS } = await import("./bridge/worker");
 const { startReconciler } = await import("./bridge/reconcile");
 const { startNotifyListener, deriveUnpooledUrl } = await import("./bridge/notify");
@@ -64,6 +64,7 @@ let startBackground: ((app: FastifyInstance) => void) | undefined;
 if (qbo && realmId && customerRef && itemRef) {
   const ops = createQboInvoiceOps({ db, cfg: qbo.cfg, realmId });
   const paymentOps = createQboPaymentOps({ db, cfg: qbo.cfg, realmId });
+  const accountOps = createQboAccountOps({ db, cfg: qbo.cfg, realmId });
   // Reverse direction: write QBO-sourced changes back into the internal system. These
   // calls emit internal webhooks; the echo is dropped by hash on the way back.
   const applyToInternal = {
@@ -104,6 +105,11 @@ if (qbo && realmId && customerRef && itemRef) {
           refetchPayment: (id) => getPayment(db, id),
           qboPayments: paymentOps,
           defaults: { customerRef },
+        },
+        // Account sync: internal GL account → QBO Account (chart of accounts).
+        accounts: {
+          refetchAccount: (id) => getAccount(db, id),
+          qboAccounts: accountOps,
         },
         // Demo: throw before an outbound QBO write while the fault budget is armed.
         faultInjector: () => {
