@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from "fastify";
 import cors from "@fastify/cors";
 import type { Database } from "../db/types";
 import type { QboConfig } from "./config";
@@ -27,8 +27,30 @@ export interface ServerDeps {
 // buildServer is pure — it takes its dependencies, so tests can inject a
 // PGlite-backed db, a capturing sink, and a mocked fetch without touching a real
 // database or Intuit.
+// Strip the query string before a URL reaches the logs. The OAuth callback carries
+// a single-use authorization code in `?code=`, which must never be logged (CWE-532).
+export function logSafeUrl(url: string): string {
+  const q = url.indexOf("?");
+  return q === -1 ? url : url.slice(0, q);
+}
+
 export function buildServer(deps?: ServerDeps): FastifyInstance {
-  const app = Fastify({ logger: true });
+  // Default request logging, minus the query string — keeps the OAuth `code`
+  // (and any future sensitive query param) out of the log stream.
+  const options: FastifyServerOptions = {
+    logger: {
+      serializers: {
+        req: (req: FastifyRequest) => ({
+          method: req.method,
+          url: logSafeUrl(req.url),
+          host: req.headers.host,
+          remoteAddress: req.ip,
+          remotePort: req.socket?.remotePort,
+        }),
+      },
+    },
+  };
+  const app = Fastify(options);
 
   // The dashboard fetches cross-origin (web :3000 → api :3001). Origin is
   // env-driven so deploy (Vercel domain) needs no code change; comma-separate for

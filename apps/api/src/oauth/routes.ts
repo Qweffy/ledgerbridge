@@ -80,8 +80,15 @@ export function registerOAuthRoutes(app: FastifyInstance, deps: OAuthRouteDeps):
       return reply.code(400).send({ error: "unexpected realmId" });
     }
 
-    const tokens = await exchangeCode(deps.cfg, query.code, fetchImpl);
-    await saveTokens(deps.db, query.realmId, tokens);
+    try {
+      const tokens = await exchangeCode(deps.cfg, query.code, fetchImpl);
+      await saveTokens(deps.db, query.realmId, tokens);
+    } catch (err) {
+      // The upstream error can carry Intuit's raw response body — log it server-side,
+      // never echo it to the caller.
+      req.log.error({ err: err instanceof Error ? err.message : String(err) }, "oauth token exchange failed");
+      return reply.code(502).send({ error: "token exchange failed" });
+    }
     return reply.send({ connected: true, realmId: query.realmId });
   });
 }

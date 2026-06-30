@@ -4,7 +4,7 @@ import { buildAuthorizeUrl, exchangeCode, refreshTokens } from "../../src/oauth/
 import { getValidAccessToken } from "../../src/oauth/manager";
 import { getTokenRow, saveTokens } from "../../src/oauth/store";
 import { noopSink } from "../../src/internal/sink";
-import { buildServer } from "../../src/server";
+import { buildServer, logSafeUrl } from "../../src/server";
 import type { QboConfig } from "../../src/config";
 
 const cfg: QboConfig = {
@@ -47,6 +47,14 @@ const TOKEN_RESP = {
   x_refresh_token_expires_in: 8640000,
   token_type: "bearer",
 };
+
+describe("logSafeUrl", () => {
+  it("strips the query string so the OAuth ?code= never reaches the logs", () => {
+    expect(logSafeUrl("/oauth/callback?code=SECRET_CODE&state=x.y.z&realmId=123")).toBe("/oauth/callback");
+    expect(logSafeUrl("/health")).toBe("/health");
+    expect(logSafeUrl("/events?status=dead")).toBe("/events");
+  });
+});
 
 describe("intuit oauth helpers", () => {
   it("builds the authorize url with scope, redirect and state", () => {
@@ -153,6 +161,27 @@ describe("oauth routes", () => {
 
     const row = await getTokenRow(h.db, "9130347");
     expect(row?.accessToken).toBe("at");
+    await app.close();
+  });
+
+  it("returns a generic 502 (not Intuit's raw error body) when the token exchange fails", async () => {
+    const intuitBody = JSON.stringify({ error: "invalid_grant", error_description: "Token invalid" });
+    const failingFetch = (async () =>
+      new Response(intuitBody, { status: 400, headers: { "content-type": "application/json" } })) as typeof fetch;
+    const app = buildServer({ db: h.db, sink: noopSink, qbo: { cfg, fetchImpl: failingFetch } });
+
+    const connect = await app.inject({ method: "GET", url: "/oauth/connect" });
+    const state = new URL(String(connect.headers.location ?? "")).searchParams.get("state") ?? "";
+
+    const cb = await app.inject({
+      method: "GET",
+      url: `/oauth/callback?code=abc&state=${state}&realmId=9130347`,
+    });
+    expect(cb.statusCode).toBe(502);
+    expect(cb.json()).toEqual({ error: "token exchange failed" });
+    // Intuit's upstream body must not leak to the caller.
+    expect(cb.body).not.toContain("invalid_grant");
+    expect(cb.body).not.toContain("Token invalid");
     await app.close();
   });
 
