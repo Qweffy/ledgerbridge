@@ -1,4 +1,4 @@
-ALTER TYPE "internal"."entity" ADD VALUE 'account';--> statement-breakpoint
+ALTER TYPE "internal"."entity" ADD VALUE IF NOT EXISTS 'account';--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "internal"."accounts" (
 	"id" text PRIMARY KEY NOT NULL,
 	"name" text NOT NULL,

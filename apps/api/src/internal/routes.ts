@@ -39,6 +39,12 @@ const updateAccountBody = z.object({
 });
 const idParam = z.object({ id: z.string().min(1) });
 
+// A Postgres unique-violation (e.g. a duplicate account name) is a client error,
+// not a server fault — surface it as 409 instead of letting it bubble to a 500.
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: string }).code === "23505";
+}
+
 // The simulated internal invoicing system's API. Money is always integer cents.
 export function registerInternalRoutes(
   app: FastifyInstance,
@@ -98,8 +104,13 @@ export function registerInternalRoutes(
   app.post("/internal/accounts", async (req, reply) => {
     const body = createAccountBody.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: body.error.flatten() });
-    const account = await createAccount(db, sink, body.data);
-    return reply.code(201).send(account);
+    try {
+      const account = await createAccount(db, sink, body.data);
+      return reply.code(201).send(account);
+    } catch (err) {
+      if (isUniqueViolation(err)) return reply.code(409).send({ error: "account name already exists" });
+      throw err;
+    }
   });
 
   app.get("/internal/accounts/:id", async (req, reply) => {
@@ -117,6 +128,7 @@ export function registerInternalRoutes(
       return await updateAccount(db, sink, id, body.data);
     } catch (err) {
       if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
+      if (isUniqueViolation(err)) return reply.code(409).send({ error: "account name already exists" });
       throw err;
     }
   });
